@@ -1,0 +1,43 @@
+# ============================================================
+# Vael-Mux 配置文件
+# ============================================================
+
+server:
+  host: "0.0.0.0"
+  web_port: 8100          # Web 管理界面
+  api_port: 8110          # API / 订阅输出端口
+
+# ============================================================
+# 订阅源列表
+# 使用 YAML 块标量 ( | ) 集中管理，每行一个 URL
+# 支持 # 注释行与空行，方便分组管理
+# 新增订阅源只需在下方追加一行
+# ============================================================
+subscriptions: |
+  # ---- 机场 A ----
+  https://example.com/api/v1/client/subscribe?token=xxx
+  https://example.org/sub?token=yyy
+
+  # ---- 机场 B ----
+  https://another-provider.net/link/abcdef123
+
+  # ---- 自建节点 (Clash YAML) ----
+  https://raw.githubusercontent.com/user/repo/main/nodes.yaml
+
+# -------- 检测参数 --------
+check:
+  concurrent: 50                # 并发检测数
+  timeout_ms: 5000              # 单节点 TCP 连接超时 (毫秒)
+  schedule: "0 9,21 * * *"      # 定时任务 cron 表达式
+
+# -------- 输出设置 --------
+output:
+  formats:
+    - mihomo                    # Clash.Meta / Mihomo
+    - singbox                   # sing-box
+    - base64                    # 通用 Base64 订阅
+  directory: "./output"
+
+# -------- 通知 (可选) --------
+notify:
+  webhook: ""                   # 检测完成后回调 URL，留空表示禁用

@@ -1,25 +1,27 @@
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Asia/Shanghai
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl tzdata \
+    curl ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# RUN pip install -r requirements.txt
-RUN pip install -r requirements.txt https://mirrors.aliyun.com/pypi/simple/
+# RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
-COPY . .
-RUN pip install -e .
+COPY app/ ./app/
+COPY config/ ./config/
 
-# Mihomo 内核目录 (用户可挂载或启动时自动下载)
-RUN mkdir -p /app/bin /app/data
+RUN mkdir -p /app/output
 
-# EXPOSE 8000 7890
-EXPOSE 8010 8901
+EXPOSE 8100 8110
 
-CMD ["vael-mux", "--config", "/app/config.yaml"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=5 \
+    CMD curl -fsS http://localhost:8100/health || exit 1
+
+CMD ["python", "-m", "app.main"]

@@ -1,16 +1,24 @@
+version: "3.8"
+
 services:
   vael-mux:
     build: .
+    image: vael-mux:latest
     container_name: vael-mux
-    ports:
-      # - "8000:8000"       # Web 面板
-      # - "7890:7890"       # 混合代理端口
-      - "8010:8010"       # Web 面板
-      - "8901:8901"       # 混合代理端口
-    volumes:
-      - ./config.yaml:/app/config.yaml
-      - ./data:/app/data
-      - ./bin:/app/bin
     restart: unless-stopped
-    cap_add:
-      - NET_ADMIN         # TUN 模式所需 (可选)
+    ports:
+      - "8100:8100" # Web 管理界面
+      - "8110:8110" # API / 订阅输出端口
+    volumes:
+      - ./config:/app/config
+      - ./output:/app/output
+    environment:
+      - TZ=Asia/Shanghai
+      - VAEL_LOG_LEVEL=INFO
+      - VAEL_CONFIG_PATH=/app/config/config.yaml
+    healthcheck:
+      test: [ "CMD", "curl", "-fsS", "http://localhost:8100/health" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

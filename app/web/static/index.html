@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vael-Mux 控制台</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Vael-Mux</h1>
+            <div class="subtitle">订阅聚合 · 节点检测 · 多格式输出</div>
+        </header>
+
+        <section class="card">
+            <div class="stage-row">
+                <span class="dot" id="stage-dot"></span>
+                <span id="stage-label" class="stage-label">连接中...</span>
+            </div>
+            <div class="message" id="message">正在建立实时连接...</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill"></div>
+            </div>
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-label">订阅源</div>
+                    <div class="stat-value">
+                        <span id="subs-done">0</span> / <span id="subs-total">0</span>
+                    </div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">节点</div>
+                    <div class="stat-value">
+                        <span id="nodes-checked">0</span> / <span id="nodes-total">0</span>
+                    </div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">可用节点</div>
+                    <div class="stat-value accent" id="nodes-alive">0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">最近更新</div>
+                    <div class="stat-value small" id="last-updated">-</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="card">
+            <h2>操作</h2>
+            <div class="actions">
+                <button id="btn-trigger" class="btn">立即执行一次</button>
+                <a class="btn-link" data-fmt="mihomo" href="#" target="_blank">Mihomo 订阅</a>
+                <a class="btn-link" data-fmt="singbox" href="#" target="_blank">Sing-box 订阅</a>
+                <a class="btn-link" data-fmt="base64" href="#" target="_blank">Base64 订阅</a>
+            </div>
+            <div class="hint" id="action-hint"></div>
+        </section>
+
+        <footer>
+            <span id="ws-state" class="ws-state">WebSocket 连接中...</span>
+        </footer>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
