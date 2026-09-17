@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=1024">
     <title>Vael-Mux 控制台</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -15,124 +15,186 @@
             <div class="subtitle">订阅聚合 · 节点检测 · 多格式输出</div>
         </header>
 
-        <!-- ========== 状态 ========== -->
-        <section class="card">
-            <div class="stage-row">
-                <span class="dot" id="stage-dot"></span>
-                <span id="stage-label" class="stage-label">连接中...</span>
-            </div>
-            <div class="message" id="message">正在建立实时连接...</div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progress-fill"></div>
-            </div>
-            <div class="stats">
-                <div class="stat">
-                    <div class="stat-label">订阅源</div>
-                    <div class="stat-value">
-                        <span id="subs-done">0</span> / <span id="subs-total">0</span>
+        <div class="layout">
+            <!-- ======================= 主区域 ======================= -->
+            <div class="main-col">
+
+                <!-- ========== 状态 ========== -->
+                <section class="card">
+                    <div class="stage-row">
+                        <span class="dot" id="stage-dot"></span>
+                        <span id="stage-label" class="stage-label">连接中...</span>
                     </div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">节点</div>
-                    <div class="stat-value">
-                        <span id="nodes-checked">0</span> / <span id="nodes-total">0</span>
+                    <div class="message" id="message">正在建立实时连接...</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
                     </div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">可用节点</div>
-                    <div class="stat-value accent" id="nodes-alive">0</div>
-                </div>
-                <div class="stat">
-                    <div class="stat-label">已导出</div>
-                    <div class="stat-value small" id="nodes-exported">0</div>
-                </div>
-            </div>
-        </section>
 
-        <!-- ========== 操作 ========== -->
-        <section class="card">
-            <h2>操作</h2>
-            <div class="actions">
-                <button id="btn-trigger" class="btn primary">立即执行一次</button>
-                <span class="hint" id="action-hint"></span>
-            </div>
-        </section>
+                    <div class="stats stats-6">
+                        <div class="stat">
+                            <div class="stat-label">订阅源</div>
+                            <div class="stat-value">
+                                <span id="subs-done">0</span> / <span id="subs-total">0</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">延迟检测</div>
+                            <div class="stat-value">
+                                <span id="nodes-checked">0</span> / <span id="nodes-total">0</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">延迟存活</div>
+                            <div class="stat-value accent" id="nodes-alive">0</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">速度检测</div>
+                            <div class="stat-value purple">
+                                <span id="speed-checked">0</span> / <span id="speed-total">0</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">有效节点</div>
+                            <div class="stat-value accent">
+                                <span id="valid-nodes">0</span>
+                                <span class="stat-sep">/</span>
+                                <span id="max-alive">∞</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">已导出</div>
+                            <div class="stat-value small" id="nodes-exported">0</div>
+                        </div>
+                    </div>
 
-        <!-- ========== 订阅端点 ========== -->
-        <section class="card">
-            <h2>订阅端点</h2>
-            <div class="sub-list">
-                <div class="sub-item">
-                    <span class="sub-name">Mihomo / Clash.Meta</span>
-                    <a class="sub-link" data-fmt="mihomo" href="#" target="_blank">/sub/mihomo</a>
-                </div>
-                <div class="sub-item">
-                    <span class="sub-name">sing-box</span>
-                    <a class="sub-link" data-fmt="singbox" href="#" target="_blank">/sub/singbox</a>
-                </div>
-                <div class="sub-item">
-                    <span class="sub-name">v2ray (v2rayN / v2rayNG / v2rayA)</span>
-                    <a class="sub-link" data-fmt="v2ray" href="#" target="_blank">/sub/v2ray</a>
-                </div>
-                <div class="sub-item">
-                    <span class="sub-name">v2ray 完整配置 (config.json)</span>
-                    <a class="sub-link" data-fmt="v2ray-json" href="#" target="_blank">/sub/v2ray-json</a>
-                </div>
-                <div class="sub-item">
-                    <span class="sub-name">通用 Base64</span>
-                    <a class="sub-link" data-fmt="base64" href="#" target="_blank">/sub/base64</a>
-                </div>
-            </div>
-        </section>
+                    <!-- 速度阶段专属进度条 -->
+                    <div class="phase-progress hidden" id="speed-progress-wrap">
+                        <div class="phase-progress-label">
+                            <span>速度测试进度</span>
+                            <span id="speed-progress-text">0 / 0 · 通过 0</span>
+                        </div>
+                        <div class="progress-bar slim">
+                            <div class="progress-fill purple" id="speed-progress-fill"></div>
+                        </div>
+                    </div>
+                </section>
 
-        <!-- ========== 节点列表 ========== -->
-        <section class="card">
-            <div class="section-header">
-                <h2>节点列表</h2>
-                <span class="section-meta" id="nodes-meta">0 / 0</span>
-            </div>
-            <div class="node-toolbar">
-                <input id="node-search" class="input" placeholder="搜索名称 / 服务器 / 类型">
-                <select id="node-filter" class="input">
-                    <option value="">全部</option>
-                    <option value="enabled">已启用</option>
-                    <option value="disabled">已禁用</option>
-                    <option value="alive">有延迟</option>
-                    <option value="dead">无延迟</option>
-                </select>
-                <button id="btn-refresh-nodes" class="btn-small">刷新</button>
-                <button id="btn-add-node" class="btn-small primary">+ 新增节点</button>
-                <div class="toolbar-spacer"></div>
-                <button id="btn-batch-enable" class="btn-small" disabled>批量启用</button>
-                <button id="btn-batch-disable" class="btn-small" disabled>批量禁用</button>
-                <button id="btn-batch-retest" class="btn-small" disabled>批量重测</button>
-                <button id="btn-batch-delete" class="btn-small danger" disabled>批量删除</button>
+                <!-- ========== 节点列表 ========== -->
+                <section class="card">
+                    <div class="section-header">
+                        <h2>节点列表</h2>
+                        <span class="section-meta" id="nodes-meta">0 / 0</span>
+                    </div>
+
+                    <div class="node-toolbar">
+                        <input id="node-search" class="input" placeholder="搜索名称 / 服务器 / 类型">
+                        <select id="node-filter" class="input">
+                            <option value="">全部</option>
+                            <option value="enabled">已启用</option>
+                            <option value="disabled">已禁用</option>
+                        </select>
+                        <button id="btn-refresh-nodes" class="btn-small">刷新</button>
+                        <button id="btn-add-node" class="btn-small primary">+ 新增节点</button>
+                        <div class="toolbar-spacer"></div>
+                        <button id="btn-batch-enable" class="btn-small" disabled>批量启用</button>
+                        <button id="btn-batch-disable" class="btn-small" disabled>批量禁用</button>
+                        <button id="btn-batch-retest" class="btn-small" disabled>批量重测</button>
+                        <button id="btn-batch-delete" class="btn-small danger" disabled>批量删除</button>
+                    </div>
+
+                    <div class="node-table-wrap">
+                        <table class="node-table">
+                            <thead id="node-thead">
+                                <!-- 动态生成 -->
+                            </thead>
+                            <tbody id="node-tbody">
+                                <tr>
+                                    <td colspan="4" class="empty">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 分页控件 -->
+                    <div class="pagination">
+                        <div class="page-info">
+                            共 <span id="page-total">0</span> 条
+                        </div>
+                        <div class="page-controls">
+                            <button id="page-first" class="btn-page" title="首页">«</button>
+                            <button id="page-prev" class="btn-page" title="上一页">‹</button>
+                            <span class="page-indicator">
+                                <span id="page-current">1</span> / <span id="page-count">1</span>
+                            </span>
+                            <button id="page-next" class="btn-page" title="下一页">›</button>
+                            <button id="page-last" class="btn-page" title="末页">»</button>
+                        </div>
+                        <div class="page-size">
+                            每页
+                            <select id="page-size">
+                                <option value="5">5</option>
+                                <option value="10">10</option>
+                                <option value="20">20</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                            条
+                        </div>
+                    </div>
+                </section>
             </div>
 
-            <div class="node-table-wrap">
-                <table class="node-table">
-                    <thead>
-                        <tr>
-                            <th class="col-check"><input type="checkbox" id="node-check-all"></th>
-                            <th>名称</th>
-                            <th>类型</th>
-                            <th>服务器</th>
-                            <th>延迟 (ms)</th>
-                            <th>抖动</th>
-                            <th>速率 (cps)</th>
-                            <th>成功率</th>
-                            <th>状态</th>
-                            <th class="col-actions">操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="node-tbody">
-                        <tr>
-                            <td colspan="10" class="empty">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
+            <!-- ======================= 右侧边栏 ======================= -->
+            <aside class="side-col">
+
+                <!-- ========== 操作 ========== -->
+                <section class="card">
+                    <h2>操作</h2>
+                    <div class="side-actions">
+                        <button id="btn-trigger" class="btn primary block">重新更新节点</button>
+                        <button id="btn-stop" class="btn danger block" disabled>停止</button>
+                    </div>
+                    <div class="hint" id="action-hint"></div>
+                </section>
+
+                <!-- ========== 日志 ========== -->
+                <section class="card">
+                    <div class="log-header">
+                        <h2>日志</h2>
+                        <button id="btn-clear-log" class="btn-mini" type="button" title="清空日志">清空</button>
+                    </div>
+                    <div class="log-view" id="log-view"></div>
+                </section>
+
+                <!-- ========== 订阅端点 ========== -->
+                <section class="card">
+                    <h2>订阅端点</h2>
+                    <div class="sub-list">
+                        <div class="sub-item">
+                            <span class="sub-name">Mihomo / Clash.Meta</span>
+                            <a class="sub-link" data-fmt="mihomo" href="#" target="_blank">/sub/mihomo</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">sing-box</span>
+                            <a class="sub-link" data-fmt="singbox" href="#" target="_blank">/sub/singbox</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">v2ray (v2rayN / v2rayNG / v2rayA)</span>
+                            <a class="sub-link" data-fmt="v2ray" href="#" target="_blank">/sub/v2ray</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">v2ray 完整配置 (config.json)</span>
+                            <a class="sub-link" data-fmt="v2ray-json" href="#" target="_blank">/sub/v2ray-json</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">通用 Base64</span>
+                            <a class="sub-link" data-fmt="base64" href="#" target="_blank">/sub/base64</a>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </div>
 
         <footer>
             <span id="ws-state" class="ws-state">WebSocket 连接中...</span>
@@ -153,7 +215,6 @@
             <form id="edit-form" class="modal-form" autocomplete="off">
                 <input type="hidden" name="id">
 
-                <!-- 基础信息 -->
                 <div class="form-section">
                     <div class="form-section-title">基础信息</div>
                     <div class="form-grid">
@@ -192,7 +253,6 @@
                     </div>
                 </div>
 
-                <!-- 认证 -->
                 <div class="form-section">
                     <div class="form-section-title">认证信息</div>
                     <div class="form-grid">
@@ -226,7 +286,6 @@
                     </div>
                 </div>
 
-                <!-- 传输与安全 -->
                 <div class="form-section">
                     <div class="form-section-title">传输与安全</div>
                     <div class="form-grid">
@@ -256,7 +315,6 @@
                     </div>
                 </div>
 
-                <!-- 状态 -->
                 <div class="form-section">
                     <div class="form-section-title">状态</div>
                     <label class="checkbox-item">
@@ -266,6 +324,8 @@
                 </div>
 
                 <div class="modal-actions">
+                    <button type="button" id="btn-delete-node" class="btn danger" style="display:none;">删除节点</button>
+                    <div class="modal-actions-spacer"></div>
                     <button type="button" id="btn-cancel-edit" class="btn">取消</button>
                     <button type="submit" id="btn-submit-edit" class="btn primary">保存并重测</button>
                 </div>

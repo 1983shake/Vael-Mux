@@ -83,7 +83,8 @@ class NodeStore:
         records: List[NodeRecord],
         preserve_user_state: bool = True,
     ) -> None:
-        """批量 upsert。preserve_user_state=True 时保留用户对已有节点的修改。"""
+        """批量 upsert。preserve_user_state=True 时保留用户对已有节点的修改
+        以及上次的 targets 测试结果。"""
         async with self._lock:
             for rec in records:
                 rec.ensure_id()
@@ -92,6 +93,9 @@ class NodeStore:
                     rec.name = existing.name or rec.name
                     rec.enabled = existing.enabled
                     rec.created_at = existing.created_at or rec.created_at
+                    # 保留上次的 targets 结果
+                    if existing.targets:
+                        rec.targets = existing.targets
                 elif not rec.created_at:
                     rec.created_at = datetime.now().isoformat(timespec="seconds")
                 rec.touch()

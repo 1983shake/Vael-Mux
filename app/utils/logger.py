@@ -1,8 +1,71 @@
+"""日志：标准输出 + 内存环形缓冲 + WebSocket 广播。"""
+
+import asyncio
 import logging
 import os
 import sys
+from collections import deque
+from datetime import datetime
+from typing import Any, Callable, Dict, List, Optional
 
 _LEVEL = os.environ.get("VAEL_LOG_LEVEL", "INFO").upper()
+
+# 最近日志环形缓冲（供 Web UI 在连接时回填历史）
+LOG_BUFFER: deque = deque(maxlen=500)
+
+# 广播回调由 Web 层在启动时注入
+_loop: Optional[asyncio.AbstractEventLoop] = None
+_broadcast_cb: Optional[Callable[[Dict[str, Any]], Any]] = None
+
+
+def set_log_broadcast(
+    loop: asyncio.AbstractEventLoop,
+    callback: Callable[[Dict[str, Any]], Any],
+) -> None:
+    """注入广播回调。
+
+    callback 应为 async 函数，接收单条日志 dict（ts / level / name / line）。
+    """
+    global _loop, _broadcast_cb
+    _loop = loop
+    _broadcast_cb = callback
+
+
+def get_recent_logs(limit: int = 200) -> List[Dict[str, Any]]:
+    """获取最近日志（按时间升序）。limit <= 0 表示返回全部。"""
+    if limit <= 0:
+        return list(LOG_BUFFER)
+    return list(LOG_BUFFER)[-limit:]
+
+
+class _RingBufferHandler(logging.Handler):
+    """把日志记录写入内存缓冲，并通过注入的回调广播。"""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            ts = datetime.now().strftime("%H:%M:%S")
+            short_name = record.name.replace("vael-mux.", "")
+            try:
+                msg = record.getMessage()
+            except Exception:
+                msg = str(record.msg)
+
+            entry = {
+                "ts": ts,
+                "level": record.levelname,
+                "name": short_name,
+                "line": f"{ts} [{record.levelname}] {short_name}: {msg}",
+            }
+            LOG_BUFFER.append(entry)
+
+            if _broadcast_cb is not None and _loop is not None and _loop.is_running():
+                try:
+                    asyncio.run_coroutine_threadsafe(_broadcast_cb(entry), _loop)
+                except Exception:
+                    pass
+        except Exception:
+            # 日志系统自身出错不影响主流程
+            pass
 
 
 def setup_logger(name: str = "vael-mux") -> logging.Logger:
@@ -10,14 +73,16 @@ def setup_logger(name: str = "vael-mux") -> logging.Logger:
     if logger.handlers:
         return logger
     logger.setLevel(_LEVEL)
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(
+
+    stream = logging.StreamHandler(sys.stdout)
+    stream.setFormatter(
         logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         )
     )
-    logger.addHandler(handler)
+    logger.addHandler(stream)
+    logger.addHandler(_RingBufferHandler())
     logger.propagate = False
     return logger
 

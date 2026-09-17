@@ -1,7 +1,7 @@
 """节点数据模型与 ID 生成。"""
 
 import hashlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -42,13 +42,20 @@ class NodeRecord:
     # ---- 用户状态 ----
     enabled: bool = True
 
-    # ---- 检测指标 ----
+    # ---- 检测指标（节点本身） ----
     latency_ms: Optional[int] = None
     latency_avg_ms: Optional[int] = None
     latency_max_ms: Optional[int] = None
     jitter_ms: Optional[int] = None
     success_rate: float = 0.0
-    speed_cps: Optional[float] = None  # 连接速率 (conn/s)
+    speed_cps: Optional[float] = None
+
+    # ---- 多目标测试结果 ----
+    # {
+    #   "latency": {"CF": {"alive": true, "latency_ms": 45}, ...},
+    #   "speed":   {"CF": {"ok": true, "speed_mbps": 12.5}, ...},
+    # }
+    targets: Dict[str, Any] = field(default_factory=dict)
 
     # ---- 元数据 ----
     source: str = ""

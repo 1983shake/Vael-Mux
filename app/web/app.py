@@ -5,28 +5,29 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import Body, FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import load_base_config
+from app.core.checker import is_fully_valid
 from app.core.startup import (
     get_store,
     regenerate_subscriptions,
     retest_single,
     run_pipeline,
     start_scheduler,
+    stop_pipeline,
     trigger_now,
 )
 from app.models import NodeRecord
-from app.utils.logger import logger
+from app.utils.logger import logger, set_log_broadcast
 from app.utils.state import TaskStage, state
 from app.web.ws import ws_router
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 
-# 允许在 PATCH / POST 里写入的字段
 PATCHABLE_FIELDS = {
     "type",
     "name",
@@ -47,7 +48,6 @@ PATCHABLE_FIELDS = {
     "enabled",
 }
 
-# 触发"保存后自动重测"的关键字段
 RETEST_FIELDS = {
     "type",
     "server",
@@ -66,7 +66,6 @@ RETEST_FIELDS = {
     "skip_cert_verify",
 }
 
-# 支持手动创建的协议
 CREATABLE_TYPES = {"vmess", "vless", "trojan", "ss", "hysteria2"}
 
 
@@ -83,6 +82,9 @@ async def _background_bootstrap() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    loop = asyncio.get_running_loop()
+    set_log_broadcast(loop, state.broadcast_log)
+
     state.stage = TaskStage.WEB_READY.value
     state.message = "Web 服务已启动，后台初始化进行中..."
     await state.notify()
@@ -97,8 +99,19 @@ async def lifespan(app: FastAPI):
         pass
 
 
+def _sort_records(records: List[NodeRecord]) -> List[NodeRecord]:
+    records.sort(
+        key=lambda r: (
+            r.latency_ms is None,
+            r.latency_ms if r.latency_ms is not None else 10**9,
+            -(r.speed_cps or 0),
+        )
+    )
+    return records
+
+
 def create_web_app() -> FastAPI:
-    app = FastAPI(title="Vael-Mux", version="1.2.0", lifespan=lifespan)
+    app = FastAPI(title="Vael-Mux", version="1.5.0", lifespan=lifespan)
     app.include_router(ws_router)
 
     if STATIC_DIR.exists():
@@ -118,6 +131,7 @@ def create_web_app() -> FastAPI:
     async def get_state():
         return state.snapshot()
 
+    # ----------------------------------------------------- 检测控制
     @app.post("/api/trigger")
     async def trigger():
         if state.running:
@@ -126,22 +140,95 @@ def create_web_app() -> FastAPI:
                 status_code=409,
             )
         trigger_now()
-        return {"ok": True, "message": "已触发检测任务"}
 
-    # ----------------------------------------------------- 节点列表
+        cfg = load_base_config()
+        include_history = bool((cfg.get("check") or {}).get("include_history", False))
+        msg = "已触发检测任务"
+        if include_history:
+            msg += "（含历史节点）"
+        return {"ok": True, "message": msg}
+
+    @app.post("/api/stop")
+    async def stop():
+        if not state.running:
+            return JSONResponse(
+                {"ok": False, "message": "当前没有正在运行的任务"},
+                status_code=409,
+            )
+        ok = await stop_pipeline()
+        if ok:
+            return {"ok": True, "message": "已请求停止，等待当前任务结束"}
+        return JSONResponse(
+            {"ok": False, "message": "停止请求未生效"},
+            status_code=409,
+        )
+
+    # ----------------------------------------------------- 目标配置
+    @app.get("/api/targets")
+    async def get_targets():
+        config = load_base_config()
+        check_cfg = config.get("check", {})
+        return {
+            "latency_targets": check_cfg.get("latency_targets", []),
+            "speed_targets": check_cfg.get("speed_targets", []),
+            "include_history": bool(check_cfg.get("include_history", False)),
+            "max_latency_nodes": state.max_latency_nodes,
+            "max_speed_nodes": state.max_speed_nodes,
+            "max_alive": state.max_alive,
+        }
+
+    # ----------------------------------------------------- 节点列表（后端分页）
     @app.get("/api/nodes")
-    async def list_nodes():
+    async def list_nodes(
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=500),
+        search: str = Query("", max_length=200),
+        filter: str = Query("", max_length=20),
+    ):
+        config = load_base_config()
+        check_cfg = config.get("check", {})
+        latency_targets = check_cfg.get("latency_targets", []) or []
+        speed_targets = check_cfg.get("speed_targets", []) or []
+
         store = get_store()
         records = await store.all()
-        # 排序：有延迟在前，延迟升序，速率降序
-        records.sort(
-            key=lambda r: (
-                r.latency_ms is None,
-                r.latency_ms if r.latency_ms is not None else 10**9,
-                -(r.speed_cps or 0),
-            )
-        )
-        return {"nodes": [r.to_dict() for r in records], "count": len(records)}
+
+        q = search.strip().lower()
+        f = filter.strip().lower()
+
+        items: List[NodeRecord] = []
+        for r in records:
+            if not is_fully_valid(r, latency_targets, speed_targets):
+                continue
+            if f == "enabled" and not r.enabled:
+                continue
+            if f == "disabled" and r.enabled:
+                continue
+            if q:
+                hay = f"{r.name} {r.server} {r.type}".lower()
+                if q not in hay:
+                    continue
+            items.append(r)
+
+        _sort_records(items)
+
+        total = len(items)
+        page_size = max(1, min(500, page_size))
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(max(1, page), pages)
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_items = items[start:end]
+
+        return {
+            "nodes": [r.to_dict() for r in page_items],
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": pages,
+            "latency_targets": latency_targets,
+            "speed_targets": speed_targets,
+        }
 
     @app.get("/api/nodes/{node_id}")
     async def get_node(node_id: str):
@@ -171,14 +258,12 @@ def create_web_app() -> FastAPI:
             raise HTTPException(400, "端口必须在 1-65535 之间")
 
         data: Dict[str, Any] = {k: v for k, v in payload.items() if k in PATCHABLE_FIELDS}
-        # 覆盖规范化后的字段
         data["type"] = ptype
         data["server"] = server
         data["port"] = port
         data.setdefault("enabled", True)
         data.setdefault("network", "tcp")
 
-        # 类型转换
         if "alterId" in data:
             try:
                 data["alterId"] = int(data["alterId"])
@@ -194,7 +279,6 @@ def create_web_app() -> FastAPI:
         rec.ensure_id()
         rec.touch()
 
-        # 去重
         existing = await store.get(rec.id)
         if existing is not None:
             raise HTTPException(
@@ -225,7 +309,6 @@ def create_web_app() -> FastAPI:
         if not filtered:
             raise HTTPException(400, "无可更新字段")
 
-        # 类型转换
         if "port" in filtered:
             try:
                 filtered["port"] = int(filtered["port"])

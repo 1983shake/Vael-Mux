@@ -10,6 +10,7 @@
         exporting: "生成订阅文件",
         idle: "空闲就绪",
         error: "发生错误",
+        stopped: "已停止",
     };
 
     const STAGE_COLORS = {
@@ -21,12 +22,50 @@
         exporting: "#4a9eff",
         idle: "#22c55e",
         error: "#ef4444",
+        stopped: "#f5a623",
     };
+
+    const LATENCY_COLOR = "#4a9eff";
+    const SPEED_COLOR = "#8b5cf6";
+
+    const PAGE_SIZE_KEY = "vael-mux-page-size";
+    const PAGE_SIZE_OPTIONS = [5, 10, 20, 50, 100, 200];
+    const DEFAULT_PAGE_SIZE = 20;
+
+    const LOG_MAX_LINES = 500;
+    const LOG_AUTOSCROLL_THRESHOLD = 40;
 
     const $ = (id) => document.getElementById(id);
 
-    let allNodes = [];
+    let latencyTargets = [];
+    let speedTargets = [];
+
+    let currentPage = 1;
+    let pageSize = loadPageSize();
+    let totalNodes = 0;
+    let totalPages = 1;
+    let currentPageIds = [];
     let selectedIds = new Set();
+
+    let modalMode = "edit";
+    let editingId = null;
+
+    let logAutoScroll = true;
+
+    // ============================================================
+    // 分页尺寸记忆
+    // ============================================================
+    function loadPageSize() {
+        try {
+            const s = parseInt(localStorage.getItem(PAGE_SIZE_KEY) || "", 10);
+            if (PAGE_SIZE_OPTIONS.includes(s)) return s;
+        } catch (_) { }
+        return DEFAULT_PAGE_SIZE;
+    }
+
+    function savePageSize(size) {
+        try { localStorage.setItem(PAGE_SIZE_KEY, String(size)); } catch (_) { }
+    }
 
     // ============================================================
     // 订阅链接
@@ -47,28 +86,132 @@
     }
 
     // ============================================================
+    // 日志
+    // ============================================================
+    function initLogView() {
+        const view = $("log-view");
+        if (!view) return;
+
+        view.addEventListener("scroll", () => {
+            const dist = view.scrollHeight - view.clientHeight - view.scrollTop;
+            logAutoScroll = dist < LOG_AUTOSCROLL_THRESHOLD;
+        });
+
+        const clearBtn = $("btn-clear-log");
+        if (clearBtn) {
+            clearBtn.addEventListener("click", () => {
+                view.innerHTML = "";
+                logAutoScroll = true;
+            });
+        }
+    }
+
+    function appendLog(entry) {
+        const view = $("log-view");
+        if (!view) return;
+
+        const level = String(entry.level || "info").toLowerCase();
+        const div = document.createElement("div");
+        div.className = "log-line log-" + level;
+        div.textContent = entry.line || "";
+
+        view.appendChild(div);
+
+        while (view.childElementCount > LOG_MAX_LINES) {
+            view.removeChild(view.firstChild);
+        }
+
+        if (logAutoScroll) {
+            view.scrollTop = view.scrollHeight;
+        }
+    }
+
+    // ============================================================
     // 状态渲染
     // ============================================================
     function renderState(s) {
-        const color = STAGE_COLORS[s.stage] || "#4a9eff";
-        $("stage-label").textContent = STAGE_LABELS[s.stage] || s.stage;
-        $("message").textContent = s.message || "";
-        $("stage-dot").style.background = color;
+        const running = !!s.running;
+        const phase = (s.phase || "").toLowerCase();
+        const stage = s.stage || "";
 
+        let stageLabel = STAGE_LABELS[stage] || stage;
+        let stageColor = STAGE_COLORS[stage] || LATENCY_COLOR;
+
+        if (stage === "checking") {
+            if (phase === "latency") {
+                stageLabel = "阶段 1/2 · 延迟检测";
+                stageColor = LATENCY_COLOR;
+            } else if (phase === "speed") {
+                stageLabel = "阶段 2/2 · 速度测试";
+                stageColor = SPEED_COLOR;
+            }
+        }
+
+        $("stage-label").textContent = stageLabel;
+        $("stage-dot").style.background = stageColor;
+
+        // 消息（延迟阶段不显示上限）
+        let msg = s.message || "";
+        if (stage === "checking" && phase === "latency") {
+            const total = s.total_nodes || 0;
+            const done = s.checked_nodes || 0;
+            const alive = s.alive_nodes || 0;
+            msg = `延迟检测中：${done} / ${total}，有效 ${alive}`;
+        } else if (stage === "checking" && phase === "speed") {
+            const total = s.speed_total || 0;
+            const done = s.speed_checked || 0;
+            const passed = s.speed_passed || 0;
+            const limit = s.max_speed_nodes ? ` / 上限 ${s.max_speed_nodes}` : "";
+            msg = `速度测试中：${done} / ${total}，有效 ${passed}${limit}`;
+        }
+        $("message").textContent = msg;
+
+        // 主进度条
         const fill = $("progress-fill");
         fill.style.width = `${Math.max(0, Math.min(1, s.progress || 0)) * 100}%`;
-        fill.style.background = color;
+        fill.style.background = stageColor;
 
+        // 六项统计
         $("subs-done").textContent = s.fetched_subscriptions ?? 0;
         $("subs-total").textContent = s.total_subscriptions ?? 0;
+
         $("nodes-checked").textContent = s.checked_nodes ?? 0;
         $("nodes-total").textContent = s.total_nodes ?? 0;
+
         $("nodes-alive").textContent = s.alive_nodes ?? 0;
+
+        $("speed-checked").textContent = s.speed_checked ?? 0;
+        $("speed-total").textContent = s.speed_total ?? 0;
+
+        $("valid-nodes").textContent = s.speed_passed ?? 0;
+        const maxDisplay = (s.max_speed_nodes && s.max_speed_nodes > 0)
+            ? s.max_speed_nodes
+            : (s.max_latency_nodes && s.max_latency_nodes > 0 ? s.max_latency_nodes : 0);
+        $("max-alive").textContent = maxDisplay > 0 ? maxDisplay : "∞";
+
         $("nodes-exported").textContent = s.exported_nodes ?? 0;
 
-        const btn = $("btn-trigger");
-        btn.disabled = !!s.running;
-        btn.textContent = s.running ? "运行中..." : "立即执行一次";
+        // 速度阶段专属进度条
+        const speedWrap = $("speed-progress-wrap");
+        if (stage === "checking" && phase === "speed") {
+            speedWrap.classList.remove("hidden");
+            const total = s.speed_total || 0;
+            const done = s.speed_checked || 0;
+            const passed = s.speed_passed || 0;
+            const pct = total > 0 ? Math.min(1, done / total) : 0;
+            $("speed-progress-fill").style.width = `${pct * 100}%`;
+            $("speed-progress-text").textContent =
+                `${done} / ${total} · 有效 ${passed}`;
+        } else {
+            speedWrap.classList.add("hidden");
+        }
+
+        // 按钮
+        const triggerBtn = $("btn-trigger");
+        const stopBtn = $("btn-stop");
+        triggerBtn.disabled = running;
+        triggerBtn.textContent = running ? "运行中..." : "重新更新节点";
+        stopBtn.disabled = !running;
     }
 
     // ============================================================
@@ -86,12 +229,19 @@
         ws.onmessage = (e) => {
             let msg;
             try { msg = JSON.parse(e.data); } catch { return; }
+
+            if (msg.event === "log") {
+                appendLog(msg);
+                return;
+            }
+
             if (msg.event === "nodes_updated") {
                 loadNodes();
-            } else {
-                renderState(msg);
-                if (msg.stage === "idle") loadNodes();
+                return;
             }
+
+            renderState(msg);
+            if (msg.stage === "idle" || msg.stage === "stopped") loadNodes();
         };
 
         ws.onclose = () => {
@@ -104,16 +254,77 @@
     }
 
     // ============================================================
-    // 节点加载 & 渲染
+    // 表格列头（动态）
+    // ============================================================
+    function targetsChanged(a, b) {
+        if (a.length !== b.length) return true;
+        for (let i = 0; i < a.length; i++) {
+            if (a[i].name !== b[i].name || a[i].url !== b[i].url) return true;
+        }
+        return false;
+    }
+
+    function buildTableHeader() {
+        const thead = $("node-thead");
+        const latCols = latencyTargets.map((t) => `
+            <th class="target-col target-latency" title="${escapeHtml(t.url || "")}">
+                ${escapeHtml(t.name)}
+                <span class="target-tag">延迟</span>
+            </th>
+        `).join("");
+        const spdCols = speedTargets.map((t) => `
+            <th class="target-col target-speed" title="${escapeHtml(t.url || "")}">
+                ${escapeHtml(t.name)}
+                <span class="target-tag">速度</span>
+            </th>
+        `).join("");
+
+        thead.innerHTML = `
+            <tr>
+                <th class="col-check"><input type="checkbox" id="node-check-all"></th>
+                <th>名称</th>
+                <th>类型</th>
+                <th>服务器</th>
+                ${latCols}
+                ${spdCols}
+            </tr>
+        `;
+    }
+
+    // ============================================================
+    // 节点加载（后端分页）
     // ============================================================
     async function loadNodes() {
         try {
-            const resp = await fetch("/api/nodes");
+            const params = new URLSearchParams({
+                page: String(currentPage),
+                page_size: String(pageSize),
+                search: $("node-search").value.trim(),
+                filter: $("node-filter").value,
+            });
+            const resp = await fetch(`/api/nodes?${params}`);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
-            allNodes = data.nodes || [];
-            renderNodes();
+
+            const newLat = data.latency_targets || [];
+            const newSpd = data.speed_targets || [];
+            const needRebuild = targetsChanged(newLat, latencyTargets)
+                || targetsChanged(newSpd, speedTargets);
+
+            latencyTargets = newLat;
+            speedTargets = newSpd;
+            if (needRebuild) buildTableHeader();
+
+            totalNodes = data.total || 0;
+            totalPages = data.pages || 1;
+            currentPage = data.page || 1;
+            pageSize = data.page_size || pageSize;
+
+            renderNodes(data.nodes || []);
+            updatePagination();
         } catch (e) {
             console.error("加载节点失败", e);
+            $("nodes-meta").textContent = "加载失败";
         }
     }
 
@@ -124,73 +335,61 @@
         return "lat-bad";
     }
 
-    function renderNodes() {
-        const search = ($("node-search").value || "").trim().toLowerCase();
-        const filter = $("node-filter").value;
+    function speedClass(mbps) {
+        if (mbps == null) return "lat-na";
+        if (mbps >= 10) return "lat-good";
+        if (mbps >= 3) return "lat-mid";
+        return "lat-bad";
+    }
 
-        let list = allNodes.filter((n) => {
-            if (filter === "enabled" && !n.enabled) return false;
-            if (filter === "disabled" && n.enabled) return false;
-            if (filter === "alive" && n.latency_ms == null) return false;
-            if (filter === "dead" && n.latency_ms != null) return false;
-            if (search) {
-                const hay = `${n.name} ${n.server} ${n.type}`.toLowerCase();
-                if (!hay.includes(search)) return false;
-            }
-            return true;
-        });
-
-        $("nodes-meta").textContent = `${list.length} / ${allNodes.length}`;
+    function renderNodes(nodes) {
+        currentPageIds = nodes.map((n) => n.id);
         const tbody = $("node-tbody");
+        const colCount = 4 + latencyTargets.length + speedTargets.length;
 
-        if (!list.length) {
-            tbody.innerHTML = `<tr><td colspan="10" class="empty">暂无节点</td></tr>`;
+        if (!nodes.length) {
+            tbody.innerHTML = `<tr><td colspan="${colCount}" class="empty">暂无节点</td></tr>`;
             updateBatchButtons();
+            syncCheckAll();
             return;
         }
 
-        tbody.innerHTML = list.map((n) => {
-            const latCls = latencyClass(n.latency_ms);
-            const lat = n.latency_ms != null ? n.latency_ms : "—";
-            const avg = n.latency_avg_ms != null ? n.latency_avg_ms : "—";
-            const jit = n.jitter_ms != null ? n.jitter_ms : "—";
-            const spd = n.speed_cps != null ? Number(n.speed_cps).toFixed(1) : "—";
-            const sr = n.success_rate != null ? (n.success_rate * 100).toFixed(0) + "%" : "—";
-            const typeBadge = `<span class="badge">${n.type}</span>`;
-            const disabledBadge = n.enabled ? "" : ` <span class="badge disabled">已禁用</span>`;
+        tbody.innerHTML = nodes.map((n) => {
             const checked = selectedIds.has(n.id) ? "checked" : "";
 
+            const latCells = latencyTargets.map((t) => {
+                const r = n.targets && n.targets.latency ? n.targets.latency[t.name] : null;
+                if (!r || r.latency_ms == null) return `<td class="lat-na">—</td>`;
+                return `<td class="${latencyClass(r.latency_ms)}">${r.latency_ms}</td>`;
+            }).join("");
+
+            const spdCells = speedTargets.map((t) => {
+                const r = n.targets && n.targets.speed ? n.targets.speed[t.name] : null;
+                if (!r || r.speed_mbps == null) return `<td class="lat-na">—</td>`;
+                return `<td class="${speedClass(r.speed_mbps)}">${Number(r.speed_mbps).toFixed(1)}</td>`;
+            }).join("");
+
             return `
-        <tr class="${n.enabled ? "" : "disabled"}">
-          <td><input type="checkbox" data-id="${n.id}" class="row-check" ${checked}></td>
-          <td class="name-cell" title="${escapeHtml(n.name)}">${escapeHtml(n.name || "—")}</td>
-          <td>${typeBadge}</td>
-          <td class="mono">${escapeHtml(n.server)}:${n.port}</td>
-          <td class="${latCls}"><b>${lat}</b> <span class="lat-na">/${avg}</span></td>
-          <td class="lat-na">${jit}</td>
-          <td class="speed">${spd}</td>
-          <td class="lat-na">${sr}</td>
-          <td>${n.enabled ? "启用" : "禁用"}${disabledBadge}</td>
-          <td class="col-actions">
-            <div class="row-actions">
-              <button data-action="edit" data-id="${n.id}">编辑</button>
-              <button data-action="retest" data-id="${n.id}">重测</button>
-              <button data-action="${n.enabled ? "disable" : "enable"}" data-id="${n.id}">
-                ${n.enabled ? "禁用" : "启用"}
-              </button>
-              <button data-action="delete" data-id="${n.id}" class="danger">删除</button>
-            </div>
-          </td>
-        </tr>
-      `;
+                <tr class="${n.enabled ? "" : "disabled"}">
+                    <td><input type="checkbox" data-id="${n.id}" class="row-check" ${checked}></td>
+                    <td class="name-cell">
+                        <a href="#" class="node-name" data-id="${n.id}" title="${escapeHtml(n.name)}">${escapeHtml(n.name || "—")}</a>
+                    </td>
+                    <td><span class="badge">${escapeHtml(n.type)}</span></td>
+                    <td class="mono">${escapeHtml(n.server)}:${n.port}</td>
+                    ${latCells}
+                    ${spdCells}
+                </tr>
+            `;
         }).join("");
 
-        // 行内按钮
-        tbody.querySelectorAll("button[data-action]").forEach((btn) => {
-            btn.addEventListener("click", () => nodeAction(btn.dataset.action, btn.dataset.id));
+        tbody.querySelectorAll(".node-name").forEach((a) => {
+            a.addEventListener("click", (e) => {
+                e.preventDefault();
+                openEditModal(a.dataset.id);
+            });
         });
 
-        // 复选框
         tbody.querySelectorAll(".row-check").forEach((cb) => {
             cb.addEventListener("change", () => {
                 if (cb.checked) selectedIds.add(cb.dataset.id);
@@ -200,16 +399,22 @@
             });
         });
 
-        syncCheckAll();
         updateBatchButtons();
+        syncCheckAll();
     }
 
     function syncCheckAll() {
-        const boxes = document.querySelectorAll(".row-check");
         const all = $("node-check-all");
-        const checkedCount = document.querySelectorAll(".row-check:checked").length;
-        all.checked = boxes.length > 0 && checkedCount === boxes.length;
-        all.indeterminate = checkedCount > 0 && checkedCount < boxes.length;
+        if (!all) return;
+        const boxes = document.querySelectorAll(".row-check");
+        if (!boxes.length) {
+            all.checked = false;
+            all.indeterminate = false;
+            return;
+        }
+        const checked = document.querySelectorAll(".row-check:checked").length;
+        all.checked = checked === boxes.length;
+        all.indeterminate = checked > 0 && checked < boxes.length;
     }
 
     function updateBatchButtons() {
@@ -225,11 +430,31 @@
     }
 
     // ============================================================
+    // 分页控件
+    // ============================================================
+    function updatePagination() {
+        $("page-total").textContent = totalNodes;
+        $("page-current").textContent = currentPage;
+        $("page-count").textContent = totalPages;
+
+        $("page-first").disabled = currentPage <= 1;
+        $("page-prev").disabled = currentPage <= 1;
+        $("page-next").disabled = currentPage >= totalPages;
+        $("page-last").disabled = currentPage >= totalPages;
+
+        $("nodes-meta").textContent = `${totalNodes} 条`;
+    }
+
+    function gotoPage(p) {
+        if (p < 1 || p > totalPages || p === currentPage) return;
+        currentPage = p;
+        loadNodes();
+    }
+
+    // ============================================================
     // 单节点操作
     // ============================================================
     async function nodeAction(action, id) {
-        if (action === "edit") return openEditModal(id);
-
         if (action === "delete") {
             if (!confirm("确定删除该节点？")) return;
             await fetch(`/api/nodes/${id}`, { method: "DELETE" });
@@ -237,15 +462,11 @@
             await loadNodes();
             return;
         }
-
         if (action === "retest") {
-            const btn = document.activeElement;
-            if (btn) btn.disabled = true;
             await fetch(`/api/nodes/${id}/retest`, { method: "POST" });
             await loadNodes();
             return;
         }
-
         if (action === "enable" || action === "disable") {
             await fetch(`/api/nodes/${id}/${action}`, { method: "POST" });
             await loadNodes();
@@ -272,9 +493,6 @@
     // ============================================================
     // 弹窗：编辑 / 新增
     // ============================================================
-    let modalMode = "edit";     // "edit" | "create"
-    let editingId = null;
-
     function openCreateModal() {
         modalMode = "create";
         editingId = null;
@@ -291,26 +509,33 @@
         $("edit-modal-title").textContent = "新增节点";
         $("edit-modal-subtitle").textContent = "手动添加的节点将立即参与检测";
         $("btn-submit-edit").textContent = "创建并重测";
+        $("btn-delete-node").style.display = "none";
 
         $("edit-modal").classList.remove("hidden");
         setTimeout(() => document.querySelector('[name="name"]').focus(), 50);
     }
 
-    function openEditModal(id) {
-        const node = allNodes.find((n) => n.id === id);
-        if (!node) return;
+    async function openEditModal(id) {
+        try {
+            const resp = await fetch(`/api/nodes/${id}`);
+            if (!resp.ok) { alert("节点不存在"); return; }
+            const node = await resp.json();
 
-        modalMode = "edit";
-        editingId = id;
+            modalMode = "edit";
+            editingId = id;
 
-        fillForm(node);
-        applyFormState();
+            fillForm(node);
+            applyFormState();
 
-        $("edit-modal-title").textContent = "编辑节点";
-        $("edit-modal-subtitle").textContent = node.id || "";
-        $("btn-submit-edit").textContent = "保存并重测";
+            $("edit-modal-title").textContent = "编辑节点";
+            $("edit-modal-subtitle").textContent = node.id || "";
+            $("btn-submit-edit").textContent = "保存并重测";
+            $("btn-delete-node").style.display = "";
 
-        $("edit-modal").classList.remove("hidden");
+            $("edit-modal").classList.remove("hidden");
+        } catch (e) {
+            alert("加载节点失败：" + e.message);
+        }
     }
 
     function closeEditModal() {
@@ -335,18 +560,15 @@
         form.sni.value = node.sni || "";
         form.host.value = node.host || "";
         form.path.value = node.path || "";
-        form.skip_cert_verify.checked =
-            !!(node.skip_cert_verify || node.insecure);
+        form.skip_cert_verify.checked = !!(node.skip_cert_verify || node.insecure);
         form.enabled.checked = node.enabled !== false;
     }
 
-    // 根据 协议 + 传输网络 动态显隐字段
     function applyFormState() {
         const form = $("edit-form");
         const type = form.type.value;
         const net = form.network.value;
 
-        // 字段级显隐
         form.querySelectorAll("[data-types], [data-nets]").forEach((el) => {
             let show = true;
             if (el.dataset.types) {
@@ -360,7 +582,6 @@
             el.classList.toggle("hidden", !show);
         });
 
-        // 整个 section 若内部所有字段都隐藏，也一并隐藏
         form.querySelectorAll(".form-section").forEach((section) => {
             const items = section.querySelectorAll(".form-field, .checkbox-item");
             const anyVisible = Array.from(items).some(
@@ -390,34 +611,19 @@
             enabled: form.enabled.checked,
         };
 
-        if (type === "vmess" || type === "vless") {
-            payload.uuid = form.uuid.value.trim();
-        }
-        if (type === "vmess") {
-            payload.alterId = Number(form.alterId.value) || 0;
-        }
-        if (type === "vless") {
-            payload.flow = form.flow.value.trim();
-        }
+        if (type === "vmess" || type === "vless") payload.uuid = form.uuid.value.trim();
+        if (type === "vmess") payload.alterId = Number(form.alterId.value) || 0;
+        if (type === "vless") payload.flow = form.flow.value.trim();
         if (type === "trojan" || type === "ss" || type === "hysteria2") {
             payload.password = form.password.value.trim();
         }
 
-        // 前端校验
-        if (!payload.server) {
-            alert("请填写服务器地址");
-            form.server.focus();
-            return;
-        }
+        if (!payload.server) { alert("请填写服务器地址"); form.server.focus(); return; }
         if (!payload.port || payload.port < 1 || payload.port > 65535) {
-            alert("请填写有效端口（1 - 65535）");
-            form.port.focus();
-            return;
+            alert("请填写有效端口（1 - 65535）"); form.port.focus(); return;
         }
         if ((type === "vmess" || type === "vless") && !payload.uuid) {
-            alert("请填写 UUID");
-            form.uuid.focus();
-            return;
+            alert("请填写 UUID"); form.uuid.focus(); return;
         }
 
         const submitBtn = $("btn-submit-edit");
@@ -456,8 +662,26 @@
         }
     }
 
+    async function deleteFromModal() {
+        if (!editingId) return;
+        if (!confirm("确定删除该节点？此操作不可撤销。")) return;
+        try {
+            const resp = await fetch(`/api/nodes/${editingId}`, { method: "DELETE" });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                alert(data.detail || `删除失败 (${resp.status})`);
+                return;
+            }
+            selectedIds.delete(editingId);
+            closeEditModal();
+            await loadNodes();
+        } catch (e) {
+            alert("请求失败：" + e.message);
+        }
+    }
+
     // ============================================================
-    // 手动触发
+    // 触发 / 停止
     // ============================================================
     async function trigger() {
         const hint = $("action-hint");
@@ -469,7 +693,27 @@
                 hint.textContent = data.message || "已触发";
                 hint.style.color = "#22c55e";
             } else {
-                hint.textContent = data.message || `触发失败 (${resp.status})`;
+                hint.textContent = data.message || data.detail || `触发失败 (${resp.status})`;
+                hint.style.color = "#ef4444";
+            }
+        } catch (err) {
+            hint.textContent = "请求失败：" + err.message;
+            hint.style.color = "#ef4444";
+        }
+    }
+
+    async function stopPipeline() {
+        if (!confirm("确定停止当前检测任务？已完成的检测结果会保留。")) return;
+        const hint = $("action-hint");
+        hint.textContent = "";
+        try {
+            const resp = await fetch("/api/stop", { method: "POST" });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.ok && data.ok) {
+                hint.textContent = data.message || "已请求停止";
+                hint.style.color = "#f5a623";
+            } else {
+                hint.textContent = data.message || data.detail || `停止失败 (${resp.status})`;
                 hint.style.color = "#ef4444";
             }
         } catch (err) {
@@ -483,20 +727,55 @@
     // ============================================================
     function bind() {
         $("btn-trigger").addEventListener("click", trigger);
+        $("btn-stop").addEventListener("click", stopPipeline);
 
-        $("btn-refresh-nodes").addEventListener("click", loadNodes);
+        $("btn-refresh-nodes").addEventListener("click", () => {
+            currentPage = 1;
+            loadNodes();
+        });
         $("btn-add-node").addEventListener("click", openCreateModal);
-        $("node-search").addEventListener("input", renderNodes);
-        $("node-filter").addEventListener("change", renderNodes);
 
-        $("node-check-all").addEventListener("change", (e) => {
-            const checked = e.target.checked;
-            document.querySelectorAll(".row-check").forEach((cb) => {
-                cb.checked = checked;
-                if (checked) selectedIds.add(cb.dataset.id);
-                else selectedIds.delete(cb.dataset.id);
-            });
-            updateBatchButtons();
+        let searchTimer = null;
+        $("node-search").addEventListener("input", () => {
+            clearTimeout(searchTimer);
+            searchTimer = setTimeout(() => {
+                currentPage = 1;
+                selectedIds.clear();
+                loadNodes();
+            }, 250);
+        });
+        $("node-filter").addEventListener("change", () => {
+            currentPage = 1;
+            selectedIds.clear();
+            loadNodes();
+        });
+
+        $("page-first").addEventListener("click", () => gotoPage(1));
+        $("page-prev").addEventListener("click", () => gotoPage(currentPage - 1));
+        $("page-next").addEventListener("click", () => gotoPage(currentPage + 1));
+        $("page-last").addEventListener("click", () => gotoPage(totalPages));
+
+        $("page-size").addEventListener("change", (e) => {
+            pageSize = parseInt(e.target.value, 10) || DEFAULT_PAGE_SIZE;
+            savePageSize(pageSize);
+            currentPage = 1;
+            selectedIds.clear();
+            loadNodes();
+        });
+
+        document.addEventListener("change", (e) => {
+            if (e.target && e.target.id === "node-check-all") {
+                const checked = e.target.checked;
+                if (checked) {
+                    currentPageIds.forEach((id) => selectedIds.add(id));
+                } else {
+                    currentPageIds.forEach((id) => selectedIds.delete(id));
+                }
+                document.querySelectorAll(".row-check").forEach((cb) => {
+                    cb.checked = checked;
+                });
+                updateBatchButtons();
+            }
         });
 
         $("btn-batch-enable").addEventListener("click", () => batchAction("enable"));
@@ -504,12 +783,10 @@
         $("btn-batch-retest").addEventListener("click", () => batchAction("retest"));
         $("btn-batch-delete").addEventListener("click", () => batchAction("delete"));
 
-        // 弹窗
         $("btn-close-edit").addEventListener("click", closeEditModal);
         $("btn-cancel-edit").addEventListener("click", closeEditModal);
+        $("btn-delete-node").addEventListener("click", deleteFromModal);
         $("edit-form").addEventListener("submit", submitEdit);
-
-        // 联动显隐
         $("edit-form").type.addEventListener("change", applyFormState);
         $("edit-form").network.addEventListener("change", applyFormState);
 
@@ -525,8 +802,16 @@
     // ============================================================
     // 启动
     // ============================================================
+    function initPageSizeSelect() {
+        const select = $("page-size");
+        select.value = String(pageSize);
+    }
+
     setupApiLinks();
+    initPageSizeSelect();
+    initLogView();
     bind();
+    buildTableHeader();
     connect();
     loadNodes();
 })();

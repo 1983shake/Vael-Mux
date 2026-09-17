@@ -16,6 +16,7 @@ class TaskStage(str, Enum):
     EXPORTING = "exporting"
     IDLE = "idle"
     ERROR = "error"
+    STOPPED = "stopped"
 
 
 @dataclass
@@ -23,6 +24,9 @@ class AppState:
     stage: str = TaskStage.WEB_READY.value
     message: str = "Web 服务已启动"
     progress: float = 0.0
+
+    # 检测子阶段："latency" | "speed" | ""
+    phase: str = ""
 
     total_subscriptions: int = 0
     fetched_subscriptions: int = 0
@@ -32,7 +36,19 @@ class AppState:
     enabled_nodes: int = 0
     exported_nodes: int = 0
 
+    # 速度阶段
+    speed_total: int = 0
+    speed_checked: int = 0
+    speed_passed: int = 0
+
+    # 上限
+    max_latency_nodes: int = 0
+    max_speed_nodes: int = 0
+    max_alive: int = 0  # 显示用（= max_speed_nodes 或 max_latency_nodes）
+    limit_reached: bool = False
+
     running: bool = False
+    stop_requested: bool = False
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     last_updated: Optional[str] = None
@@ -45,6 +61,7 @@ class AppState:
             "stage": self.stage,
             "message": self.message,
             "progress": round(self.progress, 4),
+            "phase": self.phase,
             "total_subscriptions": self.total_subscriptions,
             "fetched_subscriptions": self.fetched_subscriptions,
             "total_nodes": self.total_nodes,
@@ -52,7 +69,15 @@ class AppState:
             "alive_nodes": self.alive_nodes,
             "enabled_nodes": self.enabled_nodes,
             "exported_nodes": self.exported_nodes,
+            "speed_total": self.speed_total,
+            "speed_checked": self.speed_checked,
+            "speed_passed": self.speed_passed,
+            "max_latency_nodes": self.max_latency_nodes,
+            "max_speed_nodes": self.max_speed_nodes,
+            "max_alive": self.max_alive,
+            "limit_reached": self.limit_reached,
             "running": self.running,
+            "stop_requested": self.stop_requested,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "last_updated": self.last_updated,
@@ -77,6 +102,9 @@ class AppState:
 
     async def broadcast_event(self, event: str, data: Optional[Dict[str, Any]] = None) -> None:
         await self._send_all({"event": event, **(data or {})})
+
+    async def broadcast_log(self, entry: Dict[str, Any]) -> None:
+        await self._send_all({"event": "log", **entry})
 
 
 state = AppState()

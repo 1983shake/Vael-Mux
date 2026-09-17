@@ -18,6 +18,10 @@
     --dim: #1a1e28;
 }
 
+html {
+    min-width: 1024px;
+}
+
 html,
 body {
     height: 100%;
@@ -29,25 +33,25 @@ body {
     background: var(--bg);
     color: var(--fg);
     min-height: 100vh;
-    padding: 40px 16px;
+    padding: 28px 20px;
     -webkit-font-smoothing: antialiased;
 }
 
 .container {
-    max-width: 1200px;
+    max-width: 1360px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 18px;
 }
 
 header {
     text-align: center;
-    padding-bottom: 8px;
+    padding-bottom: 2px;
 }
 
 h1 {
-    font-size: 32px;
+    font-size: 28px;
     font-weight: 700;
     letter-spacing: 0.5px;
     background: linear-gradient(90deg, #4a9eff, #8b5cf6);
@@ -57,33 +61,56 @@ h1 {
 }
 
 .subtitle {
-    margin-top: 6px;
+    margin-top: 4px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
     letter-spacing: 0.5px;
 }
 
+/* ============================================================ 主布局 */
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    gap: 18px;
+    align-items: start;
+}
+
+.main-col {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+}
+
+.side-col {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    min-width: 0;
+}
+
+/* ============================================================ 卡片 */
 .card {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 24px;
+    padding: 18px 20px;
 }
 
 .card h2 {
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 .section-header {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 .section-header h2 {
@@ -95,11 +122,12 @@ h1 {
     color: var(--muted);
 }
 
+/* ============================================================ 状态卡片 */
 .stage-row {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .dot {
@@ -118,9 +146,9 @@ h1 {
 
 .message {
     color: var(--muted);
-    font-size: 14px;
-    min-height: 20px;
-    margin-bottom: 16px;
+    font-size: 13px;
+    min-height: 18px;
+    margin-bottom: 14px;
     word-break: break-all;
 }
 
@@ -129,7 +157,7 @@ h1 {
     background: #22262f;
     border-radius: 3px;
     overflow: hidden;
-    margin-bottom: 24px;
+    margin-bottom: 18px;
 }
 
 .progress-fill {
@@ -142,46 +170,87 @@ h1 {
 
 .stats {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 16px;
+    gap: 10px;
+}
+
+.stats-6 {
+    grid-template-columns: repeat(6, 1fr);
 }
 
 .stat {
     text-align: center;
+    min-width: 0;
 }
 
 .stat-label {
     font-size: 12px;
     color: var(--muted);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .stat-value {
-    font-size: 22px;
+    font-size: 18px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .stat-value.accent {
     color: var(--green);
 }
 
+.stat-value.purple {
+    color: var(--purple);
+}
+
 .stat-value.small {
-    font-size: 16px;
+    font-size: 15px;
     color: var(--muted);
     font-weight: 600;
 }
 
-.actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
+.stat-sep {
+    opacity: 0.5;
+    margin: 0 2px;
+    font-weight: 500;
 }
 
+/* ============================================================ 速度阶段进度条 */
+.phase-progress {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--border);
+}
+
+.phase-progress.hidden {
+    display: none;
+}
+
+.phase-progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+}
+
+.progress-bar.slim {
+    height: 4px;
+    margin-bottom: 0;
+}
+
+.progress-fill.purple {
+    background: var(--purple);
+}
+
+/* ============================================================ 按钮 */
 .btn,
 .btn-link,
-.btn-small {
+.btn-small,
+.btn-page {
     appearance: none;
     border: 1px solid var(--border);
     background: #1e2330;
@@ -193,6 +262,7 @@ h1 {
     cursor: pointer;
     text-decoration: none;
     transition: all 0.15s;
+    font-family: inherit;
 }
 
 .btn-small {
@@ -200,9 +270,17 @@ h1 {
     font-size: 12px;
 }
 
+.btn-page {
+    padding: 4px 10px;
+    font-size: 13px;
+    min-width: 30px;
+    text-align: center;
+}
+
 .btn:hover,
 .btn-link:hover,
-.btn-small:hover {
+.btn-small:hover,
+.btn-page:hover:not(:disabled) {
     border-color: var(--accent);
     background: #222a3a;
 }
@@ -215,6 +293,15 @@ h1 {
 
 .btn.primary:hover {
     background: #3d8ee6;
+}
+
+.btn.danger {
+    color: #ff8a8a;
+}
+
+.btn.danger:hover:not(:disabled) {
+    border-color: var(--red);
+    background: #2a1a1e;
 }
 
 .btn-small.primary {
@@ -237,54 +324,167 @@ h1 {
 }
 
 .btn:disabled,
-.btn-small:disabled {
-    opacity: 0.4;
+.btn-small:disabled,
+.btn-page:disabled {
+    opacity: 0.35;
     cursor: not-allowed;
 }
 
-.hint {
-    font-size: 13px;
-    color: var(--muted);
+.btn.block {
+    display: block;
+    width: 100%;
 }
 
-/* ---------- 订阅端点列表 ---------- */
-.sub-list {
+.btn-mini {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.btn-mini:hover {
+    color: var(--fg);
+    border-color: var(--accent);
+}
+
+/* ============================================================ 右侧操作卡片 */
+.side-actions {
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
 
-.sub-item {
+.side-actions .btn {
+    padding: 11px 16px;
+    font-size: 14px;
+}
+
+.hint {
+    display: block;
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--muted);
+    min-height: 16px;
+    line-height: 1.4;
+    word-break: break-all;
+}
+
+/* ============================================================ 日志卡片 */
+.log-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-    padding: 10px 14px;
+    margin-bottom: 10px;
+}
+
+.log-header h2 {
+    margin-bottom: 0;
+}
+
+.log-view {
+    height: 320px;
+    overflow-y: auto;
+    background: #0d1117;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: "SF Mono", "Consolas", "Menlo", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #c9d1d9;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2f3a #0d1117;
+}
+
+.log-view::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-view::-webkit-scrollbar-track {
+    background: #0d1117;
+}
+
+.log-view::-webkit-scrollbar-thumb {
+    background: #2a2f3a;
+    border-radius: 4px;
+}
+
+.log-view::-webkit-scrollbar-thumb:hover {
+    background: #3a4150;
+}
+
+.log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 1px 0;
+    tab-size: 2;
+}
+
+.log-line.log-debug {
+    color: #6e7681;
+}
+
+.log-line.log-info {
+    color: #c9d1d9;
+}
+
+.log-line.log-warning {
+    color: #f5c451;
+}
+
+.log-line.log-error {
+    color: #ff7a7a;
+}
+
+.log-line.log-critical {
+    color: #ff4d4d;
+    font-weight: 600;
+}
+
+/* ============================================================ 订阅端点（侧栏） */
+.sub-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.sub-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 12px;
     background: var(--dim);
     border: 1px solid var(--border);
     border-radius: 8px;
 }
 
 .sub-name {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--fg);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    line-height: 1.35;
 }
 
 .sub-link {
+    display: block;
+    text-align: center;
     font-family: "SF Mono", "Consolas", "Menlo", monospace;
     font-size: 12px;
     color: var(--accent);
     text-decoration: none;
-    padding: 4px 10px;
+    padding: 5px 8px;
     border-radius: 6px;
     background: #131720;
     border: 1px solid var(--border);
     transition: all 0.15s;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .sub-link:hover {
@@ -292,12 +492,12 @@ h1 {
     background: #182030;
 }
 
-/* ---------- 节点工具栏 ---------- */
+/* ============================================================ 节点工具栏 */
 .node-toolbar {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     align-items: center;
 }
 
@@ -316,6 +516,7 @@ h1 {
     outline: none;
     transition: border-color 0.15s;
     width: 100%;
+    font-family: inherit;
 }
 
 .input:focus {
@@ -323,8 +524,8 @@ h1 {
 }
 
 #node-search {
-    flex: 1 1 220px;
-    min-width: 160px;
+    flex: 1 1 200px;
+    min-width: 140px;
     width: auto;
 }
 
@@ -333,7 +534,7 @@ h1 {
     width: auto;
 }
 
-/* ---------- 节点表格 ---------- */
+/* ============================================================ 节点表格 */
 .node-table-wrap {
     overflow-x: auto;
     border: 1px solid var(--border);
@@ -345,7 +546,6 @@ h1 {
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
-    min-width: 900px;
 }
 
 .node-table thead th {
@@ -358,12 +558,36 @@ h1 {
     background: #141a24;
     position: sticky;
     top: 0;
+    white-space: nowrap;
+}
+
+.node-table thead th.target-col {
+    text-align: center;
+    min-width: 64px;
+}
+
+.node-table thead th.target-latency {
+    color: #9cc1ff;
+}
+
+.node-table thead th.target-speed {
+    color: #b28bff;
+}
+
+.node-table thead th .target-tag {
+    display: block;
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.7;
+    margin-top: 1px;
+    letter-spacing: 0.5px;
 }
 
 .node-table tbody td {
-    padding: 10px 12px;
+    padding: 9px 12px;
     border-bottom: 1px solid #1a1f2a;
     vertical-align: middle;
+    white-space: nowrap;
 }
 
 .node-table tbody tr:hover {
@@ -384,15 +608,29 @@ h1 {
     width: 34px;
 }
 
-.col-actions {
-    width: 200px;
-}
-
 .name-cell {
-    max-width: 260px;
-    white-space: nowrap;
+    max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.node-name {
+    color: var(--fg);
+    text-decoration: none;
+    border-bottom: 1px dashed transparent;
+    transition: all 0.15s;
+    cursor: pointer;
+    display: inline-block;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+}
+
+.node-name:hover {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
 }
 
 .mono {
@@ -408,11 +646,6 @@ h1 {
     background: #22304a;
     color: #9cc1ff;
     text-transform: lowercase;
-}
-
-.badge.disabled {
-    background: #3a2530;
-    color: #ff9bb0;
 }
 
 .lat-good {
@@ -431,41 +664,61 @@ h1 {
     color: var(--muted);
 }
 
-.speed {
-    color: #9cc1ff;
-    font-variant-numeric: tabular-nums;
-}
-
-.row-actions {
+/* ============================================================ 分页 */
+.pagination {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
     flex-wrap: wrap;
 }
 
-.row-actions button {
-    padding: 4px 8px;
-    font-size: 11px;
-    border-radius: 6px;
-    cursor: pointer;
-    border: 1px solid var(--border);
-    background: #1a2030;
-    color: var(--fg);
-    transition: all 0.15s;
+.page-info {
+    font-size: 12px;
+    color: var(--muted);
 }
 
-.row-actions button:hover {
+.page-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.page-indicator {
+    font-size: 13px;
+    color: var(--fg);
+    font-variant-numeric: tabular-nums;
+    padding: 0 6px;
+    min-width: 56px;
+    text-align: center;
+}
+
+.page-size {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.page-size select {
+    background: #131720;
+    border: 1px solid var(--border);
+    color: var(--fg);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+    font-family: inherit;
+}
+
+.page-size select:focus {
     border-color: var(--accent);
 }
 
-.row-actions button.danger {
-    color: #ff7a7a;
-}
-
-.row-actions button.danger:hover {
-    border-color: var(--red);
-}
-
-/* ---------- 弹窗 ---------- */
+/* ============================================================ 弹窗 */
 .modal {
     position: fixed;
     inset: 0;
@@ -565,8 +818,8 @@ h1 {
 }
 
 .form-section {
-    padding-bottom: 18px;
-    margin-bottom: 18px;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
     border-bottom: 1px dashed var(--border);
 }
 
@@ -582,7 +835,7 @@ h1 {
     color: var(--muted);
     text-transform: uppercase;
     letter-spacing: 1.2px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
 .form-grid {
@@ -619,7 +872,7 @@ h1 {
     display: flex;
     flex-wrap: wrap;
     gap: 18px;
-    margin-top: 12px;
+    margin-top: 10px;
 }
 
 .checkbox-item {
@@ -642,56 +895,24 @@ h1 {
 
 .modal-actions {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
     gap: 10px;
-    margin-top: 20px;
-    padding-top: 18px;
+    margin-top: 18px;
+    padding-top: 16px;
     border-top: 1px solid var(--border);
 }
 
+.modal-actions-spacer {
+    flex: 1 1 0;
+}
+
+/* ============================================================ 页脚 */
 footer {
     text-align: center;
-    padding: 8px 0 0;
+    padding: 4px 0 0;
 }
 
 .ws-state {
     font-size: 12px;
     color: var(--muted);
-}
-
-@media (max-width: 720px) {
-    .stats {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    h1 {
-        font-size: 26px;
-    }
-
-    .sub-item {
-        flex-direction: column;
-        align-items: stretch;
-    }
-
-    .sub-link {
-        text-align: center;
-    }
-
-    .form-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .modal {
-        padding: 12px;
-    }
-
-    .modal-content {
-        max-height: 94vh;
-    }
-
-    .modal-header,
-    .modal-form {
-        padding-left: 16px;
-        padding-right: 16px;
-    }
 }

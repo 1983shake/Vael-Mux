@@ -25,6 +25,70 @@ def _find_config(path: str | None = None) -> Path:
     raise FileNotFoundError(f"未找到配置文件，尝试过: {[str(c) for c in candidates]}")
 
 
+def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
+    """解析 target 列表为 [{name, url, size_hint?}, ...]。
+
+    支持三种写法：
+      1) 字符串（多行）：每行一个 URL，自动命名为 <prefix>1, <prefix>2 ...
+      2) 字符串列表：同上
+      3) 字典列表：[{name: "CF", url: "...", size_hint: 123}, ...]
+    """
+    if not raw:
+        return []
+
+    result: List[Dict[str, Any]] = []
+
+    def _add(item: Any, idx: int) -> None:
+        if isinstance(item, str):
+            s = item.strip()
+            if not s or s.startswith("#"):
+                return
+            result.append({"name": f"{prefix}{idx + 1}", "url": s})
+            return
+        if isinstance(item, dict):
+            url = str(item.get("url") or item.get("address") or "").strip()
+            if not url:
+                return
+            name = str(item.get("name") or item.get("short") or "").strip()
+            if not name:
+                name = f"{prefix}{idx + 1}"
+            entry: Dict[str, Any] = {"name": name, "url": url}
+            if "size_hint" in item:
+                try:
+                    entry["size_hint"] = int(item["size_hint"])
+                except (TypeError, ValueError):
+                    pass
+            result.append(entry)
+
+    if isinstance(raw, str):
+        n = 0
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            _add(line, n)
+            n += 1
+    elif isinstance(raw, list):
+        for i, item in enumerate(raw):
+            _add(item, i)
+
+    return result
+
+
+def _to_bool(v: Any, default: bool = False) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "y", "on"):
+            return True
+        if s in ("false", "0", "no", "n", "off", ""):
+            return False
+    return default
+
+
 def load_base_config(path: str | None = None) -> Dict[str, Any]:
     """加载完整配置，每次调用都会重新读取（支持热重载）。"""
     cfg_path = _find_config(path)
@@ -40,10 +104,13 @@ def load_base_config(path: str | None = None) -> Dict[str, Any]:
     data["check"].setdefault("concurrent", 50)
     data["check"].setdefault("timeout_ms", 5000)
     data["check"].setdefault("samples", 3)
-    data["check"].setdefault("speed_test", True)
-    data["check"].setdefault("speed_duration_ms", 500)
     data["check"].setdefault("speed_concurrency", 10)
+    data["check"].setdefault("include_history", False)
+    data["check"].setdefault("max_latency_nodes", 0)
+    data["check"].setdefault("max_speed_nodes", 0)
     data["check"].setdefault("schedule", "")
+    data["check"]["latency_targets"] = _parse_targets(data["check"].get("latency_targets"), "L")
+    data["check"]["speed_targets"] = _parse_targets(data["check"].get("speed_targets"), "S")
 
     data.setdefault("output", {})
     data["output"].setdefault("max_nodes", 0)
@@ -55,6 +122,13 @@ def load_base_config(path: str | None = None) -> Dict[str, Any]:
 
     data["_config_path"] = str(cfg_path)
     return data
+
+
+def get_include_history(config: Dict[str, Any] | None = None) -> bool:
+    """读取 check.include_history，做类型兼容。"""
+    cfg = config or load_base_config()
+    raw = (cfg.get("check") or {}).get("include_history", False)
+    return _to_bool(raw, default=False)
 
 
 def parse_subscriptions(raw: Any) -> List[str]:
