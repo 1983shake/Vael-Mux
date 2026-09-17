@@ -1,0 +1,78 @@
+server:
+  host: 0.0.0.0
+  port: 8000
+
+proxy:
+  enabled: true
+  mixed_port: 7890
+  allow_lan: true
+  mode: rule           # rule | global | direct
+
+kernel:
+  type: mihomo
+  binary: /app/bin/mihomo
+  external_controller: 127.0.0.1:9090
+  secret: ""
+  config_dir: ./data/mihomo
+
+# 订阅源：可添加任意数量的 URL，也可直接内联节点链接
+subscriptions:
+  - name: demo
+    url: "https://example.com/api/v1/client/subscribe?token=REPLACE_ME"
+    enabled: true
+    user_agent: "clash.meta"
+    inline_nodes: []
+  - name: inline
+    enabled: true
+    inline_nodes:
+      - "vless://uuid@example.com:443?encryption=none&security=tls&type=ws&host=x&path=/ws#demo-node"
+
+# 测活：支持多个测试地址
+alive_test:
+  enabled: true
+  urls:
+    - "http://www.gstatic.com/generate_204"
+    - "http://cp.cloudflare.com/generate_204"
+  interval_seconds: 300
+  timeout: 5.0
+  concurrency: 64
+  attempts: 2
+
+# 测速：支持多个测试地址
+speed_test:
+  enabled: true
+  urls:
+    - "https://speed.cloudflare.com/__down?bytes=10000000"
+  timeout: 20.0
+  concurrency: 4
+
+# 评分/排序：v2rayN 风格 + 加权得分
+scoring:
+  weights:
+    latency: 0.5
+    download_speed: 0.3
+    stability: 0.2
+  sort_mode: weighted_score   # weighted_score | latency | speed | round_robin
+
+# 路由
+routing:
+  default_outbound: auto      # auto 使用评分最高的组
+  rules:
+    - domains:
+        - "*.google.com"
+        - "*.youtube.com"
+      group: fast
+    - domains:
+        - "*.github.com"
+      group: stable
+  groups:
+    fast:
+      strategy: latency
+      top_n: 3
+    stable:
+      strategy: weighted_score
+      top_n: 2
+
+logging:
+  level: INFO
+  buffer_size: 800

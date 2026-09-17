@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+aiohttp>=3.9
+pyyaml>=6.0
+pydantic>=2.6
+websockets>=12.0
+python-multipart>=0.0.9

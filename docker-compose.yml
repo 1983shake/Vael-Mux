@@ -1,0 +1,16 @@
+services:
+  vael-mux:
+    build: .
+    container_name: vael-mux
+    ports:
+      # - "8000:8000"       # Web 面板
+      # - "7890:7890"       # 混合代理端口
+      - "8010:8010"       # Web 面板
+      - "8901:8901"       # 混合代理端口
+    volumes:
+      - ./config.yaml:/app/config.yaml
+      - ./data:/app/data
+      - ./bin:/app/bin
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN         # TUN 模式所需 (可选)
