@@ -1,0 +1,36 @@
+"release-v*":
+  tag_push:
+    - services:
+        - docker
+      stages:
+        # 步骤 1：提取版本号并生成 Release 配置文件
+        - name: prepare release
+          script: |
+            VERSION="${CNB_BRANCH#release-v}"
+            echo "版本号: ${VERSION}"
+            cat > release-options.json <<EOF
+            {
+              "title": "Vael-Mux_V${VERSION}",
+              "description": "Release Vael-Mux V${VERSION}"
+            }
+            EOF
+            echo "生成的配置内容："
+            cat release-options.json
+
+        # 步骤 2：创建 Release（通过 optionsFrom 读取 JSON）
+        - name: create release
+          type: git:release
+          optionsFrom: ./release-options.json
+
+        # 步骤 3：构建并推送 Docker 镜像
+        - name: docker build and push
+          script: |
+            IMAGE_BASE="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+            VERSION="${CNB_BRANCH#release-v}"
+            echo "正在构建版本: ${VERSION}"
+            docker build \
+              -t "${IMAGE_BASE}:${VERSION}" \
+              -t "${IMAGE_BASE}:latest" \
+              .
+            docker push "${IMAGE_BASE}:${VERSION}"
+            docker push "${IMAGE_BASE}:latest"
