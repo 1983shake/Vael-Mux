@@ -8,7 +8,6 @@ Web 服务先就绪，完整流水线在 Web 的 lifespan 中以后台任务方�
 """
 
 import asyncio
-import signal
 import sys
 
 import uvicorn

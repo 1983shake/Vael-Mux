@@ -1,14 +1,14 @@
-version: "3.8"
+#version: "3.8"
 
 services:
   vael-mux:
     build: .
-    image: vael-mux:latest
+    #image: vael-mux:latest
     container_name: vael-mux
     restart: unless-stopped
     ports:
-      - "8100:8100" # Web 管理界面
-      - "8110:8110" # API / 订阅输出端口
+      - "8100:8100"       # Web 管理界面
+      - "8110:8110"       # API / 订阅输出端口
     volumes:
       - ./config:/app/config
       - ./output:/app/output
@@ -17,7 +17,7 @@ services:
       - VAEL_LOG_LEVEL=INFO
       - VAEL_CONFIG_PATH=/app/config/config.yaml
     healthcheck:
-      test: [ "CMD", "curl", "-fsS", "http://localhost:8100/health" ]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/health"]
       interval: 15s
       timeout: 5s
       retries: 5

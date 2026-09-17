@@ -25,16 +25,27 @@
 
     const $ = (id) => document.getElementById(id);
 
-    // ---------------------------------------------------- 配置 API 链接
+    // ---------------------------------------------------- 配置订阅端点链接
+    // 页面可能与 API 服务不同端口；若当前不是 8110，则按 8110 拼接。
+    function apiBase() {
+        if (location.port === "8110") {
+            return `${location.protocol}//${location.host}`;
+        }
+        return `${location.protocol}//${location.hostname}:8110`;
+    }
+
     function setupApiLinks() {
-        const base = `${location.protocol}//${location.hostname}:8110`;
-        document.querySelectorAll("a.btn-link").forEach((a) => {
+        const base = apiBase();
+        document.querySelectorAll("a.sub-link").forEach((a) => {
             const fmt = a.dataset.fmt;
-            if (fmt) a.href = `${base}/sub/${fmt}`;
+            if (fmt) {
+                a.href = `${base}/sub/${fmt}`;
+                a.title = a.href;
+            }
         });
     }
 
-    // ---------------------------------------------------- 渲染
+    // ---------------------------------------------------- 渲染状态
     function render(s) {
         const color = STAGE_COLORS[s.stage] || "#4a9eff";
 

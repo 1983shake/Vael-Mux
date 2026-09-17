@@ -8,13 +8,20 @@ from fastapi.responses import FileResponse
 from app.config import load_base_config
 from app.utils.state import state
 
+# 路由别名 -> (文件名, MIME 类型)
 FORMAT_MAP = {
     "mihomo": ("mihomo.yaml", "text/yaml; charset=utf-8"),
     "clash": ("mihomo.yaml", "text/yaml; charset=utf-8"),
     "singbox": ("singbox.json", "application/json; charset=utf-8"),
     "sing-box": ("singbox.json", "application/json; charset=utf-8"),
     "base64": ("base64.txt", "text/plain; charset=utf-8"),
-    "v2ray": ("base64.txt", "text/plain; charset=utf-8"),
+    "v2ray": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2rayn": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2rayng": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2raya": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2ray-json": ("v2ray.json", "application/json; charset=utf-8"),
+    "v2ray_json": ("v2ray.json", "application/json; charset=utf-8"),
+    "v2ray-config": ("v2ray.json", "application/json; charset=utf-8"),
 }
 
 
@@ -28,6 +35,13 @@ def create_api_app() -> FastAPI:
     @app.get("/api/status")
     async def status():
         return state.snapshot()
+
+    @app.get("/api/formats")
+    async def formats():
+        return {
+            "formats": sorted(set(FORMAT_MAP.keys())),
+            "canonical": ["mihomo", "singbox", "base64", "v2ray", "v2ray-json"],
+        }
 
     @app.get("/sub/{fmt}")
     async def get_sub(fmt: str):
@@ -46,14 +60,16 @@ def create_api_app() -> FastAPI:
                 detail="订阅文件尚未生成，请等待首次检测完成",
             )
 
+        headers = {"Cache-Control": "no-store"}
+        # 仅对订阅类输出添加客户端刷新提示
+        if filename in ("mihomo.yaml", "v2ray.txt", "base64.txt"):
+            headers["Profile-Update-Interval"] = "12"
+
         return FileResponse(
             str(path),
             media_type=media_type,
             filename=filename,
-            headers={
-                "Cache-Control": "no-store",
-                "Profile-Update-Interval": "12",
-            },
+            headers=headers,
         )
 
     return app
