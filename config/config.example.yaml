@@ -31,11 +31,19 @@ check:
   schedule: "0 9,21 * * *"      # 定时任务 cron 表达式
 
 # -------- 输出设置 --------
+# 支持: mihomo | singbox | base64 | v2ray | v2ray-json
+#   mihomo      -> mihomo.yaml   (Clash.Meta / Mihomo)
+#   singbox     -> singbox.json  (sing-box)
+#   base64      -> base64.txt    (通用 Base64 URI 列表)
+#   v2ray       -> v2ray.txt     (v2rayN / v2rayNG / v2rayA 订阅)
+#   v2ray-json  -> v2ray.json    (v2ray 完整 config.json)
 output:
   formats:
-    - mihomo                    # Clash.Meta / Mihomo
-    - singbox                   # sing-box
-    - base64                    # 通用 Base64 订阅
+    - mihomo
+    - singbox
+    - base64
+    - v2ray
+    - v2ray-json
   directory: "./output"
 
 # -------- 通知 (可选) --------
