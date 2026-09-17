@@ -7,12 +7,12 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates tzdata \
+    curl ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir -r requirements.txt
+# RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
 COPY app/ ./app/
 COPY config/ ./config/

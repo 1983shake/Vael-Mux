@@ -29,6 +29,8 @@ class AppState:
     total_nodes: int = 0
     checked_nodes: int = 0
     alive_nodes: int = 0
+    enabled_nodes: int = 0
+    exported_nodes: int = 0
 
     running: bool = False
     started_at: Optional[str] = None
@@ -48,17 +50,15 @@ class AppState:
             "total_nodes": self.total_nodes,
             "checked_nodes": self.checked_nodes,
             "alive_nodes": self.alive_nodes,
+            "enabled_nodes": self.enabled_nodes,
+            "exported_nodes": self.exported_nodes,
             "running": self.running,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "last_updated": self.last_updated,
         }
 
-    async def notify(self) -> None:
-        """向所有订阅者推送当前快照，清理失效连接。"""
-        self.last_updated = datetime.now().isoformat(timespec="seconds")
-        payload = self.snapshot()
-
+    async def _send_all(self, payload: Dict[str, Any]) -> None:
         dead = []
         for ws in list(self.subscribers):
             try:
@@ -70,6 +70,13 @@ class AppState:
                 self.subscribers.remove(ws)
             except ValueError:
                 pass
+
+    async def notify(self) -> None:
+        self.last_updated = datetime.now().isoformat(timespec="seconds")
+        await self._send_all({"event": "state", **self.snapshot()})
+
+    async def broadcast_event(self, event: str, data: Optional[Dict[str, Any]] = None) -> None:
+        await self._send_all({"event": event, **(data or {})})
 
 
 state = AppState()

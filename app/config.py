@@ -39,9 +39,14 @@ def load_base_config(path: str | None = None) -> Dict[str, Any]:
     data.setdefault("check", {})
     data["check"].setdefault("concurrent", 50)
     data["check"].setdefault("timeout_ms", 5000)
+    data["check"].setdefault("samples", 3)
+    data["check"].setdefault("speed_test", True)
+    data["check"].setdefault("speed_duration_ms", 500)
+    data["check"].setdefault("speed_concurrency", 10)
     data["check"].setdefault("schedule", "")
 
     data.setdefault("output", {})
+    data["output"].setdefault("max_nodes", 0)
     data["output"].setdefault("formats", ["mihomo", "singbox", "base64"])
     data["output"].setdefault("directory", "./output")
 
@@ -53,12 +58,7 @@ def load_base_config(path: str | None = None) -> Dict[str, Any]:
 
 
 def parse_subscriptions(raw: Any) -> List[str]:
-    """解析订阅源列表。
-
-    支持两种格式：
-      1. YAML 块标量字符串（推荐）：每行一个 URL，支持 # 注释、空行
-      2. YAML 列表
-    """
+    """解析订阅源列表，支持块标量（推荐）和列表两种格式。"""
     if raw is None:
         return []
 

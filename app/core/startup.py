@@ -1,27 +1,83 @@
-"""后台流水线编排：拉取 -> 解析 -> 检测 -> 导出。"""
+"""后台流水线编排：拉取 -> 解析 -> 合并存储 -> 检测 -> 导出。"""
 
 import asyncio
 import logging
 from datetime import datetime
+from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.config import load_base_config, parse_subscriptions
-from app.core.checker import check_all
+from app.core.checker import check_all, check_node_metrics
 from app.core.exporter import export_all
 from app.core.fetcher import fetch_all
 from app.core.parser import parse_all
+from app.core.store import NodeStore
+from app.models import NodeRecord
 from app.utils.state import TaskStage, state
 
 logger = logging.getLogger("vael-mux.startup")
 
 _pipeline_lock = asyncio.Lock()
 _scheduler: AsyncIOScheduler | None = None
+_store: NodeStore | None = None
 
 
+# ------------------------------------------------------- 单例
+def get_store(config: dict | None = None) -> NodeStore:
+    global _store
+    if _store is None:
+        cfg = config or load_base_config()
+        out_dir = Path(cfg["output"].get("directory", "./output"))
+        _store = NodeStore(out_dir / "nodes.json")
+    return _store
+
+
+# ------------------------------------------------------- 选择要导出的节点
+def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecord]:
+    alive = [r for r in records if r.enabled and r.latency_ms is not None]
+    alive.sort(key=lambda r: (r.latency_ms or 10**9, -(r.speed_cps or 0)))
+    max_n = int(config.get("output", {}).get("max_nodes", 0) or 0)
+    if max_n > 0:
+        alive = alive[:max_n]
+    return alive
+
+
+# ------------------------------------------------------- 导出（独立，供 UI 调用）
+async def regenerate_subscriptions(config: dict | None = None) -> list[str]:
+    cfg = config or load_base_config()
+    store = get_store(cfg)
+    records = await store.all()
+    selected = select_exportable(records, cfg)
+    await export_all([r.to_dict() for r in selected], cfg.get("output", {}))
+    state.exported_nodes = len(selected)
+    return [r.id for r in selected]
+
+
+# ------------------------------------------------------- 单节点重测
+async def retest_single(node_id: str) -> NodeRecord | None:
+    cfg = load_base_config()
+    store = get_store(cfg)
+    rec = await store.get(node_id)
+    if rec is None:
+        return None
+
+    check_cfg = cfg.get("check", {})
+    metrics = await check_node_metrics(
+        rec,
+        timeout_s=int(check_cfg.get("timeout_ms", 5000)) / 1000.0,
+        samples=int(check_cfg.get("samples", 3)),
+        speed_test=bool(check_cfg.get("speed_test", True)),
+        speed_duration_s=int(check_cfg.get("speed_duration_ms", 500)) / 1000.0,
+    )
+    await store.update_metrics(node_id, metrics)
+    await store.save()
+    return await store.get(node_id)
+
+
+# ------------------------------------------------------- 主流水线
 async def run_pipeline() -> None:
-    """执行一次完整流水线。若已有实例在运行则直接返回。"""
     if _pipeline_lock.locked():
         logger.info("流水线正在运行，跳过本次触发")
         return
@@ -29,8 +85,9 @@ async def run_pipeline() -> None:
     async with _pipeline_lock:
         config = load_base_config()
         urls = parse_subscriptions(config.get("subscriptions"))
+        store = get_store(config)
+        await store.ensure_loaded()
 
-        # 重置状态
         state.running = True
         state.started_at = datetime.now().isoformat(timespec="seconds")
         state.finished_at = None
@@ -46,65 +103,77 @@ async def run_pipeline() -> None:
         await state.notify()
 
         try:
-            # ---------- 1. 拉取 ----------
             if not urls:
                 raise RuntimeError("未配置任何订阅源")
 
+            # ---------- 拉取 ----------
             state.stage = TaskStage.FETCHING.value
             state.message = "正在拉取订阅源..."
             state.progress = 0.05
             await state.notify()
-
             raw_texts = await fetch_all(urls, progress_callback=_on_fetch_progress)
-            logger.info(f"拉取完成: {len(raw_texts)}/{len(urls)} 个订阅源成功")
 
-            # ---------- 2. 解析 ----------
+            # ---------- 解析 & 合并 ----------
             state.stage = TaskStage.PARSING.value
             state.message = "正在解析节点..."
-            state.progress = 0.32
+            state.progress = 0.25
             await state.notify()
+            parsed = parse_all(raw_texts)
+            new_records = [NodeRecord.from_dict(item) for item in parsed]
 
-            nodes = parse_all(raw_texts)
-            state.total_nodes = len(nodes)
-            state.progress = 0.35
-            state.message = f"解析到 {len(nodes)} 个节点（已去重）"
+            await store.bulk_upsert(new_records, preserve_user_state=True)
+            all_records = await store.all()
+
+            state.total_nodes = len(all_records)
+            state.message = f"解析到 {len(new_records)} 个新节点，" f"存储中共 {len(all_records)} 个节点"
             await state.notify()
-            logger.info(f"解析完成: {len(nodes)} 个节点")
+            logger.info(state.message)
 
-            # ---------- 3. 检测 ----------
+            # ---------- 检测（仅启用节点） ----------
             state.stage = TaskStage.CHECKING.value
-            state.message = f"正在检测 {len(nodes)} 个节点..."
+            to_check = [r for r in all_records if r.enabled]
+            state.enabled_nodes = len(to_check)
+            state.message = f"正在检测 {len(to_check)} 个启用节点..."
             await state.notify()
 
+            check_cfg = config.get("check", {})
             alive = await check_all(
-                nodes,
-                concurrent=int(config["check"].get("concurrent", 50)),
-                timeout_ms=int(config["check"].get("timeout_ms", 5000)),
+                to_check,
+                concurrent=int(check_cfg.get("concurrent", 50)),
+                timeout_ms=int(check_cfg.get("timeout_ms", 5000)),
+                samples=int(check_cfg.get("samples", 3)),
+                speed_test=bool(check_cfg.get("speed_test", True)),
+                speed_duration_ms=int(check_cfg.get("speed_duration_ms", 500)),
+                speed_concurrency=int(check_cfg.get("speed_concurrency", 10)),
                 progress_callback=_on_check_progress,
             )
-            logger.info(f"检测完成: {len(alive)}/{len(nodes)} 个节点可用")
+            await store.save()
+            logger.info(f"检测完成: 可用 {len(alive)} / 检测 {len(to_check)}")
 
-            # ---------- 4. 导出 ----------
+            # ---------- 导出 ----------
             state.stage = TaskStage.EXPORTING.value
             state.message = "正在生成订阅文件..."
             state.progress = 0.92
             await state.notify()
 
-            written = await export_all(alive, config.get("output", {}))
-            logger.info(f"导出完成: {written}")
+            all_records = await store.all()
+            selected = select_exportable(all_records, config)
+            await export_all([r.to_dict() for r in selected], config.get("output", {}))
+            state.exported_nodes = len(selected)
+            logger.info(f"已导出 {len(selected)} 个节点")
 
-            # ---------- 5. 完成 ----------
             state.stage = TaskStage.IDLE.value
             state.progress = 1.0
             state.running = False
             state.finished_at = datetime.now().isoformat(timespec="seconds")
-            state.message = f"完成：{len(alive)} / {len(nodes)} 个节点可用"
+            state.message = f"完成：可用 {len(alive)} / 检测 {len(to_check)}，" f"导出 {len(selected)} 个节点"
             await state.notify()
+            await state.broadcast_event("nodes_updated")
 
-            await _notify_webhook(config, len(alive), len(nodes))
+            await _notify_webhook(config, len(alive), len(to_check))
 
         except Exception as e:
-            logger.exception("流水线执行失败")
+            logger.exception("流水线失败")
             state.stage = TaskStage.ERROR.value
             state.message = f"执行失败：{e}"
             state.running = False
@@ -115,7 +184,7 @@ async def run_pipeline() -> None:
 async def _on_fetch_progress(done: int, total: int) -> None:
     state.fetched_subscriptions = done
     if total:
-        state.progress = 0.05 + 0.25 * (done / total)
+        state.progress = 0.05 + 0.20 * (done / total)
     await state.notify()
 
 
@@ -123,7 +192,7 @@ async def _on_check_progress(done: int, total: int, alive: int) -> None:
     state.checked_nodes = done
     state.alive_nodes = alive
     if total:
-        state.progress = 0.35 + 0.55 * (done / total)
+        state.progress = 0.30 + 0.60 * (done / total)
     await state.notify()
 
 
@@ -141,7 +210,6 @@ async def _notify_webhook(config: dict, alive: int, total: int) -> None:
 
 
 def start_scheduler() -> None:
-    """启动 cron 定时任务。重复调用安全。"""
     global _scheduler
     if _scheduler is not None:
         return
@@ -169,5 +237,4 @@ def start_scheduler() -> None:
 
 
 def trigger_now() -> None:
-    """手动触发一次流水线（不阻塞）。"""
     asyncio.create_task(run_pipeline())

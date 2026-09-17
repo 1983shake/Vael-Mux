@@ -132,7 +132,7 @@ def _to_mihomo(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "type": "trojan",
                 "password": n.get("password", ""),
-                "skip-cert-verify": bool(n.get("skip_cert_verify", False)),
+                "skip-cert-verify": bool(n.get("skip_cert_verify") or n.get("insecure", False)),
             }
         )
         if n.get("sni"):
@@ -154,7 +154,7 @@ def _to_mihomo(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             {
                 "type": "hysteria2",
                 "password": n.get("password", ""),
-                "skip-cert-verify": bool(n.get("insecure", False)),
+                "skip-cert-verify": bool(n.get("skip_cert_verify") or n.get("insecure", False)),
             }
         )
         if n.get("sni"):

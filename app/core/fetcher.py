@@ -36,7 +36,7 @@ async def fetch_all(
     completed = 0
 
     async with httpx.AsyncClient(
-        headers={"User-Agent": "Vael-Mux/1.0"},
+        headers={"User-Agent": "Vael-Mux/1.1"},
         timeout=30.0,
         follow_redirects=True,
     ) as client:

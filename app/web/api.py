@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse
 from app.config import load_base_config
 from app.utils.state import state
 
-# 路由别名 -> (文件名, MIME 类型)
 FORMAT_MAP = {
     "mihomo": ("mihomo.yaml", "text/yaml; charset=utf-8"),
     "clash": ("mihomo.yaml", "text/yaml; charset=utf-8"),
@@ -26,7 +25,7 @@ FORMAT_MAP = {
 
 
 def create_api_app() -> FastAPI:
-    app = FastAPI(title="Vael-Mux API", version="1.0.0")
+    app = FastAPI(title="Vael-Mux API", version="1.1.0")
 
     @app.get("/health")
     async def health():
@@ -61,7 +60,6 @@ def create_api_app() -> FastAPI:
             )
 
         headers = {"Cache-Control": "no-store"}
-        # 仅对订阅类输出添加客户端刷新提示
         if filename in ("mihomo.yaml", "v2ray.txt", "base64.txt"):
             headers["Profile-Update-Interval"] = "12"
 

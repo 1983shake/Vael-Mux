@@ -28,16 +28,16 @@ subscriptions: |
 check:
   concurrent: 50                # 并发检测数
   timeout_ms: 5000              # 单节点 TCP 连接超时 (毫秒)
+  samples: 3                    # 每个节点的延迟采样次数
+  speed_test: true              # 是否执行速率测试
+  speed_duration_ms: 500        # 每节点速率测试时长 (毫秒)
+  speed_concurrency: 10         # 速率测试并发节点数
   schedule: "0 9,21 * * *"      # 定时任务 cron 表达式
 
 # -------- 输出设置 --------
 # 支持: mihomo | singbox | base64 | v2ray | v2ray-json
-#   mihomo      -> mihomo.yaml   (Clash.Meta / Mihomo)
-#   singbox     -> singbox.json  (sing-box)
-#   base64      -> base64.txt    (通用 Base64 URI 列表)
-#   v2ray       -> v2ray.txt     (v2rayN / v2rayNG / v2rayA 订阅)
-#   v2ray-json  -> v2ray.json    (v2ray 完整 config.json)
 output:
+  max_nodes: 50                 # 有效节点上限，0 表示不限制
   formats:
     - mihomo
     - singbox
