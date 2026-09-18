@@ -166,48 +166,35 @@
         let stageLabel = STAGE_LABELS[stage] || stage;
         let stageColor = STAGE_COLORS[stage] || LATENCY_COLOR;
 
-        if (stage === "checking") {
-            if (phase === "latency") {
-                stageLabel = "延迟 -> 速度（单节点流水线）";
-                stageColor = LATENCY_COLOR;
-            } else if (phase === "speed") {
-                stageLabel = "延迟 -> 速度（单节点流水线）";
-                stageColor = SPEED_COLOR;
-            }
+        if (stage === "checking" && (phase === "latency" || phase === "speed")) {
+            stageLabel = "延迟 -> 速度（单节点流水线）";
+            stageColor = phase === "speed" ? SPEED_COLOR : LATENCY_COLOR;
         }
 
         $("stage-label").textContent = stageLabel;
         $("stage-dot").style.background = stageColor;
 
-        // 消息
         $("message").textContent = s.message || "";
 
-        // 主进度条
         const fill = $("progress-fill");
         fill.style.width = `${Math.max(0, Math.min(1, s.progress || 0)) * 100}%`;
         fill.style.background = stageColor;
 
-        // 六项统计
         $("subs-done").textContent = s.fetched_subscriptions ?? 0;
         $("subs-total").textContent = s.total_subscriptions ?? 0;
 
         $("nodes-checked").textContent = s.checked_nodes ?? 0;
         $("nodes-total").textContent = s.total_nodes ?? 0;
 
-        // 有效延迟
         $("nodes-alive").textContent = s.alive_nodes ?? 0;
-
-        // 有效速度
         $("speed-passed").textContent = s.speed_passed ?? 0;
 
-        // 有效节点：有效数量 / 上限（未设置显示 ∞）
         $("valid-nodes").textContent = s.speed_passed ?? 0;
         const maxValid = s.max_valid_nodes || 0;
         $("max-valid").textContent = maxValid > 0 ? maxValid : "∞";
 
         $("nodes-exported").textContent = s.exported_nodes ?? 0;
 
-        // 速度阶段专属进度条
         const speedWrap = $("speed-progress-wrap");
         const spdTotal = s.speed_total || 0;
         const spdDone = s.speed_checked || 0;
@@ -222,7 +209,6 @@
             speedWrap.classList.add("hidden");
         }
 
-        // 按钮
         const triggerBtn = $("btn-trigger");
         const stopBtn = $("btn-stop");
         triggerBtn.disabled = running;
@@ -271,7 +257,6 @@
 
     // ============================================================
     // 表格列头（动态，含启用/禁用状态）
-    // 单位只显示在表头，节点单元格只显示数值
     // ============================================================
     function targetsChanged(a, b) {
         if (a.length !== b.length) return true;
@@ -334,7 +319,7 @@
                 page_size: String(pageSize),
                 search: $("node-search").value.trim(),
                 filter: $("node-filter").value,
-                _t: String(Date.now()),   // 防浏览器缓存
+                _t: String(Date.now()),
             });
             const resp = await fetch(`/api/nodes?${params}`, { cache: "no-store" });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -377,12 +362,6 @@
         return "lat-bad";
     }
 
-    /**
-     * 速度格式化：
-     *   < 0.1 Mbps  -> 保留 3 位小数（如 0.063）
-     *   >= 0.1 Mbps -> 保留 2 位小数（如 0.56 / 12.34）
-     *   无效（null / <= 0 / NaN） -> null
-     */
     function formatSpeed(mbps) {
         const v = Number(mbps);
         if (!isFinite(v) || v <= 0) return null;
@@ -411,7 +390,6 @@
                 }
                 const r = n.targets && n.targets.latency ? n.targets.latency[t.name] : null;
                 if (!r || r.latency_ms == null) return `<td class="lat-na">—</td>`;
-                // 只显示数值，单位在表头
                 return `<td class="${latencyClass(r.latency_ms)}">${r.latency_ms}</td>`;
             }).join("");
 
@@ -423,7 +401,6 @@
                 const v = r ? r.speed_mbps : null;
                 const text = formatSpeed(v);
                 if (text == null) return `<td class="lat-na">—</td>`;
-                // 只显示数值，单位在表头
                 return `<td class="${speedClass(v)}">${text}</td>`;
             }).join("");
 
@@ -512,28 +489,6 @@
     // ============================================================
     // 单节点操作
     // ============================================================
-    async function nodeAction(action, id) {
-        if (action === "delete") {
-            if (!confirm("确定删除该节点？")) return;
-            await fetch(`/api/nodes/${id}`, { method: "DELETE" });
-            selectedIds.delete(id);
-            await loadNodes();
-            return;
-        }
-        if (action === "retest") {
-            await fetch(`/api/nodes/${id}/retest`, { method: "POST" });
-            await loadNodes();
-            return;
-        }
-        if (action === "enable" || action === "disable") {
-            await fetch(`/api/nodes/${id}/${action}`, { method: "POST" });
-            await loadNodes();
-        }
-    }
-
-    // ============================================================
-    // 批量操作
-    // ============================================================
     async function batchAction(action) {
         const ids = Array.from(selectedIds);
         if (!ids.length) return;
@@ -549,7 +504,7 @@
     }
 
     // ============================================================
-    // 弹窗：编辑 / 新增
+    // 弹窗：编辑 / 新增节点
     // ============================================================
     function openCreateModal() {
         modalMode = "create";
@@ -781,11 +736,258 @@
     }
 
     // ============================================================
+    // 配置弹窗
+    // ============================================================
+    function renderTargetList(containerId, targets, kind) {
+        const container = $(containerId);
+        container.innerHTML = "";
+
+        if (!targets.length) {
+            const empty = document.createElement("div");
+            empty.className = "target-empty";
+            empty.textContent = "暂无目标";
+            container.appendChild(empty);
+            return;
+        }
+
+        targets.forEach((t) => {
+            container.appendChild(buildTargetRow(t, kind));
+        });
+    }
+
+    function buildTargetRow(t, kind) {
+        const row = document.createElement("div");
+        row.className = "target-row";
+        row.dataset.kind = kind;
+
+        const nameInput = document.createElement("input");
+        nameInput.className = "input mono t-name";
+        nameInput.type = "text";
+        nameInput.placeholder = "名称";
+        nameInput.value = t.name || "";
+
+        const urlInput = document.createElement("input");
+        urlInput.className = "input mono t-url";
+        urlInput.type = "text";
+        urlInput.placeholder = "URL";
+        urlInput.value = t.url || "";
+
+        row.appendChild(nameInput);
+        row.appendChild(urlInput);
+
+        if (kind === "speed") {
+            const sizeInput = document.createElement("input");
+            sizeInput.className = "input mono t-size";
+            sizeInput.type = "number";
+            sizeInput.min = "0";
+            sizeInput.placeholder = "size_hint";
+            if (t.size_hint != null) sizeInput.value = String(t.size_hint);
+            row.appendChild(sizeInput);
+        }
+
+        const enabledLabel = document.createElement("label");
+        enabledLabel.className = "checkbox-item";
+        const enabledCb = document.createElement("input");
+        enabledCb.type = "checkbox";
+        enabledCb.className = "t-enabled";
+        enabledCb.checked = t.enabled !== false;
+        const enabledText = document.createElement("span");
+        enabledText.textContent = "启用";
+        enabledLabel.appendChild(enabledCb);
+        enabledLabel.appendChild(enabledText);
+        row.appendChild(enabledLabel);
+
+        const delBtn = document.createElement("button");
+        delBtn.type = "button";
+        delBtn.className = "btn-mini danger";
+        delBtn.textContent = "删除";
+        delBtn.addEventListener("click", () => {
+            row.remove();
+            const container = row.parentElement;
+            if (container && !container.querySelector(".target-row")) {
+                const empty = document.createElement("div");
+                empty.className = "target-empty";
+                empty.textContent = "暂无目标";
+                container.appendChild(empty);
+            }
+        });
+        row.appendChild(delBtn);
+
+        return row;
+    }
+
+    function appendTargetRow(containerId, kind) {
+        const container = $(containerId);
+        const empty = container.querySelector(".target-empty");
+        if (empty) empty.remove();
+        container.appendChild(buildTargetRow({ enabled: true }, kind));
+    }
+
+    function fillConfigForm(cfg) {
+        const server = cfg.server || {};
+        const logging = cfg.logging || {};
+        const check = cfg.check || {};
+        const output = cfg.output || {};
+        const notify = cfg.notify || {};
+
+        $("cfg-server-host").value = server.host || "0.0.0.0";
+        $("cfg-server-web-port").value = server.web_port ?? 8100;
+        $("cfg-server-api-port").value = server.api_port ?? 8110;
+
+        const level = String(logging.level || "INFO").toUpperCase();
+        $("cfg-logging-level").value = level;
+
+        $("cfg-subscriptions").value = typeof cfg.subscriptions === "string"
+            ? cfg.subscriptions
+            : (cfg.subscriptions || []).join("\n");
+
+        $("cfg-check-concurrent").value = check.concurrent ?? 50;
+        $("cfg-check-timeout").value = check.timeout_ms ?? 5000;
+        $("cfg-check-samples").value = check.samples ?? 3;
+        $("cfg-check-max-valid").value = check.max_valid_nodes ?? 0;
+        $("cfg-check-schedule").value = check.schedule || "";
+        $("cfg-check-include-history").checked = !!check.include_history;
+
+        renderTargetList("cfg-latency-targets", check.latency_targets || [], "latency");
+        renderTargetList("cfg-speed-targets", check.speed_targets || [], "speed");
+
+        $("cfg-output-dir").value = output.directory || "./output";
+        const fmtSet = new Set((output.formats || []).map((s) => String(s).toLowerCase()));
+        document.querySelectorAll(".cfg-format").forEach((cb) => {
+            cb.checked = fmtSet.has(cb.value);
+        });
+
+        $("cfg-notify-webhook").value = notify.webhook || "";
+    }
+
+    function collectTargets(containerId, kind) {
+        const rows = document.querySelectorAll(`#${containerId} .target-row`);
+        const out = [];
+        rows.forEach((row) => {
+            const name = row.querySelector(".t-name").value.trim();
+            const url = row.querySelector(".t-url").value.trim();
+            if (!url) return;
+            const enabled = row.querySelector(".t-enabled").checked;
+            const item = { name: name || undefined, url, enabled };
+            if (kind === "speed") {
+                const sizeEl = row.querySelector(".t-size");
+                const sizeVal = sizeEl ? sizeEl.value.trim() : "";
+                if (sizeVal) {
+                    const n = Number(sizeVal);
+                    if (Number.isFinite(n) && n > 0) item.size_hint = n;
+                }
+            }
+            out.push(item);
+        });
+        return out;
+    }
+
+    function collectConfig() {
+        const formats = Array.from(document.querySelectorAll(".cfg-format:checked"))
+            .map((cb) => cb.value);
+
+        return {
+            server: {
+                host: $("cfg-server-host").value.trim() || "0.0.0.0",
+                web_port: Number($("cfg-server-web-port").value) || 8100,
+                api_port: Number($("cfg-server-api-port").value) || 8110,
+            },
+            logging: {
+                level: $("cfg-logging-level").value,
+            },
+            subscriptions: $("cfg-subscriptions").value,
+            check: {
+                concurrent: Number($("cfg-check-concurrent").value) || 50,
+                timeout_ms: Number($("cfg-check-timeout").value) || 5000,
+                samples: Number($("cfg-check-samples").value) || 3,
+                include_history: $("cfg-check-include-history").checked,
+                max_valid_nodes: Number($("cfg-check-max-valid").value) || 0,
+                schedule: $("cfg-check-schedule").value.trim(),
+                latency_targets: collectTargets("cfg-latency-targets", "latency"),
+                speed_targets: collectTargets("cfg-speed-targets", "speed"),
+            },
+            output: {
+                max_nodes: 0,
+                formats: formats.length ? formats : ["mihomo", "singbox", "base64"],
+                directory: $("cfg-output-dir").value.trim() || "./output",
+            },
+            notify: {
+                webhook: $("cfg-notify-webhook").value.trim(),
+            },
+        };
+    }
+
+    async function openConfigModal() {
+        try {
+            const resp = await fetch("/api/config", { cache: "no-store" });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const cfg = await resp.json();
+            fillConfigForm(cfg);
+            $("config-modal").classList.remove("hidden");
+        } catch (e) {
+            alert("加载配置失败：" + e.message);
+        }
+    }
+
+    function closeConfigModal() {
+        $("config-modal").classList.add("hidden");
+    }
+
+    async function saveConfig() {
+        const payload = collectConfig();
+
+        if (!payload.check.concurrent || payload.check.concurrent < 1) {
+            alert("节点并发数必须 >= 1");
+            return;
+        }
+        if (!payload.check.timeout_ms || payload.check.timeout_ms < 100) {
+            alert("超时时间必须 >= 100 毫秒");
+            return;
+        }
+        if (!payload.check.samples || payload.check.samples < 1) {
+            alert("延迟采样次数必须 >= 1");
+            return;
+        }
+
+        const btn = $("btn-save-config");
+        const originText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "保存中...";
+
+        try {
+            const resp = await fetch("/api/config", {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) {
+                alert(data.detail || `保存失败 (${resp.status})`);
+                return;
+            }
+            closeConfigModal();
+            await loadNodes();
+
+            const hint = $("action-hint");
+            if (hint) {
+                hint.textContent = data.message || "配置已保存并生效";
+                hint.style.color = "#22c55e";
+            }
+        } catch (e) {
+            alert("请求失败：" + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = originText;
+        }
+    }
+
+    // ============================================================
     // 事件绑定
     // ============================================================
     function bind() {
         $("btn-trigger").addEventListener("click", trigger);
         $("btn-stop").addEventListener("click", stopPipeline);
+        $("btn-open-config").addEventListener("click", openConfigModal);
 
         $("btn-refresh-nodes").addEventListener("click", () => {
             currentPage = 1;
@@ -852,8 +1054,25 @@
             if (e.target.id === "edit-modal") closeEditModal();
         });
 
+        // ---- 配置弹窗事件 ----
+        $("btn-close-config").addEventListener("click", closeConfigModal);
+        $("btn-cancel-config").addEventListener("click", closeConfigModal);
+        $("btn-save-config").addEventListener("click", saveConfig);
+        $("btn-add-latency-target").addEventListener("click", () =>
+            appendTargetRow("cfg-latency-targets", "latency")
+        );
+        $("btn-add-speed-target").addEventListener("click", () =>
+            appendTargetRow("cfg-speed-targets", "speed")
+        );
+        $("config-modal").addEventListener("click", (e) => {
+            if (e.target.id === "config-modal") closeConfigModal();
+        });
+
         document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") closeEditModal();
+            if (e.key === "Escape") {
+                closeEditModal();
+                closeConfigModal();
+            }
         });
     }
 
@@ -861,8 +1080,7 @@
     // 启动
     // ============================================================
     function initPageSizeSelect() {
-        const select = $("page-size");
-        select.value = String(pageSize);
+        $("page-size").value = String(pageSize);
     }
 
     setupApiLinks();

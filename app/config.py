@@ -8,6 +8,30 @@ import yaml
 
 DEFAULT_CONFIG_PATH = os.environ.get("VAEL_CONFIG_PATH", "config/config.yaml")
 
+_VALID_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
+
+# ============================================================ 内部工具
+def _to_bool(v: Any, default: bool = False) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "y", "on"):
+            return True
+        if s in ("false", "0", "no", "n", "off", ""):
+            return False
+    return default
+
+
+def _to_int(v: Any, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
 
 def _find_config(path: str | None = None) -> Path:
     candidates = []
@@ -25,20 +49,18 @@ def _find_config(path: str | None = None) -> Path:
     raise FileNotFoundError(f"未找到配置文件，尝试过: {[str(c) for c in candidates]}")
 
 
-def _to_bool(v: Any, default: bool = False) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("true", "1", "yes", "y", "on"):
-            return True
-        if s in ("false", "0", "no", "n", "off", ""):
-            return False
-    return default
+# ============================================================ YAML 序列化
+def _str_representer(dumper, data):
+    """多行字符串（如 subscriptions）用块标量 '|' 输出，更易读。"""
+    if "\n" in data and data.strip():
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
+yaml.SafeDumper.add_representer(str, _str_representer)
+
+
+# ============================================================ targets 解析
 def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
     """解析 target 列表为 [{name, url, enabled, size_hint?}, ...]。"""
     if not raw:
@@ -94,6 +116,7 @@ def enabled_targets(targets: Any) -> List[Dict[str, Any]]:
     return [t for t in targets if isinstance(t, dict) and t.get("enabled", True)]
 
 
+# ============================================================ 加载
 def load_base_config(path: str | None = None) -> Dict[str, Any]:
     """加载完整配置，每次调用都会重新读取（支持热重载）。"""
     cfg_path = _find_config(path)
@@ -154,3 +177,108 @@ def parse_subscriptions(raw: Any) -> List[str]:
             continue
         result.append(s)
     return result
+
+
+# ============================================================ 保存
+def _normalize_targets(raw: Any, with_size: bool) -> List[Dict[str, Any]]:
+    result: List[Dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return result
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        name = str(item.get("name") or "").strip() or f"T{i + 1}"
+        entry: Dict[str, Any] = {
+            "name": name,
+            "url": url,
+            "enabled": bool(item.get("enabled", True)),
+        }
+        if with_size and item.get("size_hint") is not None:
+            entry["size_hint"] = _to_int(item.get("size_hint"), 0)
+        result.append(entry)
+    return result
+
+
+def _normalize_for_dump(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """整理写回时的配置结构：去内部字段、补默认值、稳定顺序。"""
+    out: Dict[str, Any] = {}
+
+    # ---- server ----
+    server = cfg.get("server") or {}
+    out["server"] = {
+        "host": str(server.get("host") or "0.0.0.0"),
+        "web_port": _to_int(server.get("web_port"), 8100),
+        "api_port": _to_int(server.get("api_port"), 8110),
+    }
+
+    # ---- logging ----
+    logging_cfg = cfg.get("logging") or {}
+    level = str(logging_cfg.get("level") or "INFO").upper()
+    if level not in _VALID_LEVELS:
+        level = "INFO"
+    out["logging"] = {"level": level}
+
+    # ---- subscriptions（块标量）----
+    subs = cfg.get("subscriptions")
+    if isinstance(subs, list):
+        text = "\n".join(str(x) for x in subs)
+    else:
+        text = str(subs or "")
+    out["subscriptions"] = text.rstrip("\n") + "\n"
+
+    # ---- check ----
+    check = cfg.get("check") or {}
+    out["check"] = {
+        "concurrent": _to_int(check.get("concurrent"), 50),
+        "timeout_ms": _to_int(check.get("timeout_ms"), 5000),
+        "samples": _to_int(check.get("samples"), 3),
+        "include_history": bool(check.get("include_history", False)),
+        "max_valid_nodes": _to_int(check.get("max_valid_nodes"), 0),
+        "latency_targets": _normalize_targets(check.get("latency_targets"), with_size=False),
+        "speed_targets": _normalize_targets(check.get("speed_targets"), with_size=True),
+        "schedule": str(check.get("schedule") or "").strip(),
+    }
+
+    # ---- output ----
+    output = cfg.get("output") or {}
+    formats = output.get("formats") or []
+    if not isinstance(formats, list) or not formats:
+        formats = ["mihomo", "singbox", "base64"]
+    out["output"] = {
+        "max_nodes": _to_int(output.get("max_nodes"), 0),
+        "formats": [str(f) for f in formats],
+        "directory": str(output.get("directory") or "./output"),
+    }
+
+    # ---- notify ----
+    notify = cfg.get("notify") or {}
+    out["notify"] = {"webhook": str(notify.get("webhook") or "")}
+
+    return out
+
+
+_HEADER = (
+    "# ============================================================\n"
+    "# Vael-Mux 配置文件（由 Web 控制台保存）\n"
+    "# ============================================================\n\n"
+)
+
+
+def save_config(data: Dict[str, Any], path: str | None = None) -> str:
+    """将结构化配置写回 YAML 文件（原子写入），返回写入路径。"""
+    cfg_path = _find_config(path)
+    clean = _normalize_for_dump(data)
+    text = yaml.safe_dump(
+        clean,
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+        width=4096,
+    )
+    tmp = cfg_path.with_suffix(cfg_path.suffix + ".tmp")
+    tmp.write_text(_HEADER + text, encoding="utf-8")
+    tmp.replace(cfg_path)
+    return str(cfg_path)

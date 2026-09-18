@@ -152,6 +152,7 @@
                     <div class="side-actions">
                         <button id="btn-trigger" class="btn primary block">重新更新节点</button>
                         <button id="btn-stop" class="btn danger block" disabled>停止</button>
+                        <button id="btn-open-config" class="btn block">配置</button>
                     </div>
                     <div class="hint" id="action-hint"></div>
                 </section>
@@ -337,6 +338,146 @@
                     <button type="submit" id="btn-submit-edit" class="btn primary">保存并重测</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ========== 配置弹窗 ========== -->
+    <div id="config-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <div>
+                    <h3>配置</h3>
+                    <div class="modal-subtitle">保存后自动重新加载生效；端口修改需重启容器</div>
+                </div>
+                <button id="btn-close-config" class="icon-btn" type="button" aria-label="关闭">×</button>
+            </div>
+
+            <div class="modal-form">
+                <div class="form-section">
+                    <div class="form-section-title">服务器</div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>监听地址</label>
+                            <input id="cfg-server-host" class="input mono" type="text" spellcheck="false">
+                        </div>
+                        <div class="form-field">
+                            <label>Web 端口</label>
+                            <input id="cfg-server-web-port" class="input mono" type="number" min="1" max="65535">
+                        </div>
+                        <div class="form-field">
+                            <label>API 端口</label>
+                            <input id="cfg-server-api-port" class="input mono" type="number" min="1" max="65535">
+                        </div>
+                    </div>
+                    <div class="form-hint">端口修改需重启容器后生效。</div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">日志</div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>日志级别</label>
+                            <select id="cfg-logging-level" class="input">
+                                <option value="DEBUG">DEBUG</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="CRITICAL">CRITICAL</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">订阅源（每行一个，支持 # 注释）</div>
+                    <textarea id="cfg-subscriptions" class="input mono" rows="6" spellcheck="false"></textarea>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">检测参数</div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>节点并发数</label>
+                            <input id="cfg-check-concurrent" class="input mono" type="number" min="1">
+                        </div>
+                        <div class="form-field">
+                            <label>单次超时（毫秒）</label>
+                            <input id="cfg-check-timeout" class="input mono" type="number" min="100">
+                        </div>
+                        <div class="form-field">
+                            <label>延迟采样次数</label>
+                            <input id="cfg-check-samples" class="input mono" type="number" min="1">
+                        </div>
+                        <div class="form-field">
+                            <label>有效节点上限（0=不限）</label>
+                            <input id="cfg-check-max-valid" class="input mono" type="number" min="0">
+                        </div>
+                        <div class="form-field full">
+                            <label>定时任务 cron 表达式</label>
+                            <input id="cfg-check-schedule" class="input mono" type="text" placeholder="0 9,21 * * *"
+                                spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="checkbox-row">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="cfg-check-include-history">
+                            <span>检测时并入历史节点</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">延迟目标</div>
+                    <div id="cfg-latency-targets" class="target-editor"></div>
+                    <button type="button" class="btn-small" id="btn-add-latency-target">+ 添加延迟目标</button>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">速度目标</div>
+                    <div id="cfg-speed-targets" class="target-editor"></div>
+                    <button type="button" class="btn-small" id="btn-add-speed-target">+ 添加速度目标</button>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">输出</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>输出目录</label>
+                            <input id="cfg-output-dir" class="input mono" type="text" spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="checkbox-row" id="cfg-output-formats">
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="mihomo"><span>mihomo</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="singbox"><span>singbox</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="base64"><span>base64</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="v2ray"><span>v2ray</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="v2ray-json"><span>v2ray-json</span></label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">通知（可选）</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>Webhook URL</label>
+                            <input id="cfg-notify-webhook" class="input mono" type="text" spellcheck="false">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <div class="form-hint" style="flex:1 1 0; margin-top:0;">
+                        保存会重写整个 YAML 文件，原文件中的自定义注释将被覆盖。
+                    </div>
+                    <button type="button" id="btn-cancel-config" class="btn">取消</button>
+                    <button type="button" id="btn-save-config" class="btn primary">保存</button>
+                </div>
+            </div>
         </div>
     </div>
 

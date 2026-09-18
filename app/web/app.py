@@ -5,16 +5,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.config import enabled_targets, load_base_config
+from app.config import enabled_targets, load_base_config, save_config
 from app.core.checker import is_fully_valid
 from app.core.startup import (
     get_store,
     regenerate_subscriptions,
+    reload_scheduler,
     retest_single,
     run_pipeline,
     start_scheduler,
@@ -25,6 +27,7 @@ from app.models import NodeRecord
 from app.utils.runtime import (
     LOG_BACKFILL,
     TaskStage,
+    apply_log_level,
     get_recent_logs,
     logger,
     set_log_broadcast,
@@ -54,7 +57,6 @@ PATCHABLE_FIELDS = {
     "enabled",
 }
 
-# 修改这些字段会触发自动重测
 RETEST_FIELDS = {
     "type",
     "server",
@@ -81,9 +83,11 @@ _NO_CACHE_HEADERS = {
     "Expires": "0",
 }
 
+_VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+
 
 class NoCacheStaticFiles(StaticFiles):
-    """静态文件禁用浏览器缓存，确保前端更新后立即生效。"""
+    """静态文件禁用浏览器缓存。"""
 
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
@@ -133,7 +137,7 @@ def _sort_records(records: List[NodeRecord]) -> None:
 
 
 def _asset_version() -> str:
-    """用文件 mtime 作为资源版本号，确保 app.js / style.css 更新后自动失效缓存。"""
+    """用文件 mtime 作为资源版本号。"""
     parts = []
     for name in ("app.js", "style.css"):
         try:
@@ -141,6 +145,78 @@ def _asset_version() -> str:
         except Exception:
             parts.append("0")
     return "-".join(parts)
+
+
+def _validate_config(payload: Dict[str, Any]) -> None:
+    """对即将写回的配置做基本校验，非法时抛 HTTPException(400)。"""
+    server = payload.get("server") or {}
+    check = payload.get("check") or {}
+    output = payload.get("output") or {}
+
+    # ---- server ----
+    for key, label in (("web_port", "Web 端口"), ("api_port", "API 端口")):
+        try:
+            v = int(server.get(key) or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{label}必须为整数")
+        if not (1 <= v <= 65535):
+            raise HTTPException(400, f"{label}必须在 1-65535 之间")
+
+    # ---- logging ----
+    level = str((payload.get("logging") or {}).get("level") or "INFO").upper()
+    if level not in _VALID_LOG_LEVELS:
+        raise HTTPException(400, f"日志级别无效: {level}")
+
+    # ---- check ----
+    for key, label in (("concurrent", "节点并发数"), ("samples", "延迟采样次数")):
+        try:
+            v = int(check.get(key) or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{label}必须为整数")
+        if v < 1:
+            raise HTTPException(400, f"{label}必须 >= 1")
+
+    try:
+        timeout_ms = int(check.get("timeout_ms") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "超时时间必须为整数")
+    if timeout_ms < 100:
+        raise HTTPException(400, "超时时间必须 >= 100 毫秒")
+
+    try:
+        max_valid = int(check.get("max_valid_nodes") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "有效节点上限必须为整数")
+    if max_valid < 0:
+        raise HTTPException(400, "有效节点上限不能为负数")
+
+    for key, label in (("latency_targets", "延迟目标"), ("speed_targets", "速度目标")):
+        targets = check.get(key)
+        if targets is None:
+            continue
+        if not isinstance(targets, list):
+            raise HTTPException(400, f"{label}必须为列表")
+        for i, t in enumerate(targets):
+            if not isinstance(t, dict):
+                raise HTTPException(400, f"{label}第 {i + 1} 项格式错误")
+            if not str(t.get("url") or "").strip():
+                raise HTTPException(400, f"{label}第 {i + 1} 项缺少 URL")
+
+    schedule = str(check.get("schedule") or "").strip()
+    if schedule:
+        try:
+            CronTrigger.from_crontab(schedule)
+        except Exception as e:
+            raise HTTPException(400, f"cron 表达式无效: {e}")
+
+    # ---- output ----
+    formats = output.get("formats")
+    if formats is not None:
+        if not isinstance(formats, list) or not formats:
+            raise HTTPException(400, "输出格式不能为空")
+        for f in formats:
+            if not str(f).strip():
+                raise HTTPException(400, "输出格式不能包含空值")
 
 
 def create_web_app() -> FastAPI:
@@ -159,15 +235,12 @@ def create_web_app() -> FastAPI:
         await websocket.accept()
         state.subscribers.append(websocket)
         try:
-            # 1) 当前状态
             await websocket.send_json({"event": "state", **state.snapshot()})
-            # 2) 回填最近日志
             for entry in get_recent_logs(LOG_BACKFILL):
                 try:
                     await websocket.send_json({"event": "log", **entry})
                 except Exception:
                     break
-            # 3) 保持连接（仅服务端推送）
             while True:
                 await websocket.receive_text()
         except WebSocketDisconnect:
@@ -183,7 +256,6 @@ def create_web_app() -> FastAPI:
     # ----------------------------------------------------- 页面
     @app.get("/")
     async def index():
-        """动态注入资源版本号，避免浏览器缓存旧版 app.js / style.css。"""
         html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         v = _asset_version()
         html = html.replace('href="/static/style.css"', f'href="/static/style.css?v={v}"')
@@ -203,6 +275,42 @@ def create_web_app() -> FastAPI:
     @app.get("/api/state")
     async def get_state():
         return state.snapshot()
+
+    # ----------------------------------------------------- 配置读取 / 保存
+    @app.get("/api/config")
+    async def get_config():
+        cfg = load_base_config()
+        clean = {k: v for k, v in cfg.items() if not str(k).startswith("_")}
+        return JSONResponse(clean, headers=_NO_CACHE_HEADERS)
+
+    @app.put("/api/config")
+    async def put_config(payload: Dict[str, Any] = Body(...)):
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "配置必须为对象")
+
+        _validate_config(payload)
+
+        try:
+            path = save_config(payload)
+        except Exception as e:
+            logger.exception("保存配置失败")
+            raise HTTPException(500, f"保存配置失败: {e}")
+
+        applied_level = apply_log_level()
+        try:
+            reload_scheduler()
+        except Exception:
+            logger.exception("调度器重载失败")
+
+        logger.info(f"配置已保存到 {path}，日志级别：{applied_level}")
+
+        await state.broadcast_event("nodes_updated")
+
+        return {
+            "ok": True,
+            "path": path,
+            "message": (f"配置已保存（日志级别 {applied_level}）。" "端口修改需重启容器后生效。"),
+        }
 
     # ----------------------------------------------------- 检测控制
     @app.post("/api/trigger")

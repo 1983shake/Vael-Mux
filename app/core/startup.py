@@ -44,11 +44,7 @@ def get_store(config: dict | None = None) -> NodeStore:
 
 
 def _resolve_max_valid(config: dict) -> int:
-    """解析「有效节点」上限。
-
-    优先读 max_valid_nodes；若为 0，则回退到旧字段
-    （max_speed_nodes / max_latency_nodes / max_alive_nodes）以保持兼容。
-    """
+    """解析「有效节点」上限。优先读 max_valid_nodes，否则回退旧字段。"""
     check_cfg = config.get("check", {}) or {}
 
     def _int(key: str) -> int:
@@ -75,11 +71,7 @@ def _resolve_include_history(config: dict) -> bool:
 
 
 def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecord]:
-    """从一批记录中筛选导出节点：启用 + 有效延迟 + 有效速度。
-
-    排序规则：延迟升序，其次速度降序。
-    不做 output.max_nodes 截断——导出数量由 check.max_valid_nodes 决定。
-    """
+    """从一批记录中筛选导出节点：启用 + 有效延迟 + 有效速度。"""
     check_cfg = config.get("check", {}) or {}
     latency_targets = check_cfg.get("latency_targets", []) or []
     speed_targets = check_cfg.get("speed_targets", []) or []
@@ -90,10 +82,7 @@ def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecor
 
 
 async def regenerate_subscriptions(config: dict | None = None) -> list[str]:
-    """重新生成订阅文件（供手动增删改节点 / 重测后调用）。
-
-    导出数量 = store 中所有有效节点数，不做额外上限截断。
-    """
+    """重新生成订阅文件（供手动增删改节点 / 重测后调用）。"""
     cfg = config or load_base_config()
     store = get_store(cfg)
     records = await store.all()
@@ -202,7 +191,6 @@ async def run_pipeline() -> None:
             new_records = [NodeRecord.from_dict(item) for item in parsed]
             new_ids = {r.id for r in new_records}
 
-            # 历史节点（仅用于检测，不写入最终 store、不导出）
             all_stored = await store.all()
             history_records = [r for r in all_stored if r.id not in new_ids] if include_history else []
 
@@ -216,7 +204,7 @@ async def run_pipeline() -> None:
             await state.notify()
             logger.info(state.message)
 
-            # ---------- 检测（单节点流水线 + 节点并发）----------
+            # ---------- 检测 ----------
             _raise_if_stopped()
             state.stage = TaskStage.CHECKING.value
             state.enabled_nodes = len(test_list)
@@ -243,8 +231,6 @@ async def run_pipeline() -> None:
             logger.info(f"检测完成: 通过节点 {len(alive)} / 待测 {len(test_list)}")
 
             # ---------- 导出 ----------
-            # alive 已按 max_valid_nodes 截断；
-            # 过滤掉历史节点，只保留本次订阅源中的有效节点。
             _raise_if_stopped()
             state.stage = TaskStage.EXPORTING.value
             state.message = "正在生成订阅文件..."
@@ -293,7 +279,6 @@ async def run_pipeline() -> None:
             await _notify_webhook(config, len(valid_list), len(test_list))
 
         except asyncio.CancelledError:
-            # 手动停止：不修改 store，保留原有节点列表
             logger.info("流水线已被手动停止，节点列表保持不变")
             state.stage = TaskStage.STOPPED.value
             state.message = "已手动停止（节点列表未变更）"
@@ -309,7 +294,6 @@ async def run_pipeline() -> None:
             raise
 
         except Exception as e:
-            # 失败：不修改 store，保留原有节点列表
             logger.exception("流水线失败，节点列表保持不变")
             state.stage = TaskStage.ERROR.value
             state.message = f"执行失败：{e}（节点列表未变更）"
@@ -383,6 +367,18 @@ def start_scheduler() -> None:
         logger.info(f"调度器已启动，cron: {schedule}")
     except Exception as e:
         logger.error(f"调度器启动失败: {e}")
+
+
+def reload_scheduler() -> None:
+    """配置热更新后重启调度器（schedule 变化时生效）。"""
+    global _scheduler
+    if _scheduler is not None:
+        try:
+            _scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        _scheduler = None
+    start_scheduler()
 
 
 async def _scheduled_run() -> None:

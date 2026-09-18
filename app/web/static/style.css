@@ -346,11 +346,21 @@ h1 {
     cursor: pointer;
     transition: all 0.15s;
     font-family: inherit;
+    white-space: nowrap;
 }
 
 .btn-mini:hover {
     color: var(--fg);
     border-color: var(--accent);
+}
+
+.btn-mini.danger {
+    color: #ff7a7a;
+}
+
+.btn-mini.danger:hover {
+    border-color: var(--red);
+    color: #ff8a8a;
 }
 
 /* ============================================================ 右侧操作卡片 */
@@ -583,7 +593,6 @@ h1 {
     letter-spacing: 0.5px;
 }
 
-/* 已关闭的测试目标列（表头 + 单元格） */
 .node-table thead th.target-col.target-disabled {
     opacity: 0.45;
 }
@@ -675,7 +684,6 @@ h1 {
     color: var(--muted);
 }
 
-/* 已关闭的测试目标单元格：显示 "×"，灰色 */
 .lat-disabled {
     color: #4a5060;
     text-align: center;
@@ -775,6 +783,10 @@ h1 {
     overflow: auto;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
     animation: modal-pop 0.18s ease-out;
+}
+
+.modal-content.modal-wide {
+    max-width: 820px;
 }
 
 @keyframes modal-pop {
@@ -887,6 +899,13 @@ h1 {
     display: none !important;
 }
 
+.form-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 8px;
+    line-height: 1.5;
+}
+
 .checkbox-row {
     display: flex;
     flex-wrap: wrap;
@@ -910,6 +929,52 @@ h1 {
     accent-color: var(--accent);
     cursor: pointer;
     margin: 0;
+}
+
+textarea.input {
+    width: 100%;
+    min-height: 110px;
+    resize: vertical;
+    font-family: "SF Mono", "Consolas", "Menlo", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* ============================================================ 配置：targets 编辑器 */
+.target-editor {
+    margin-bottom: 10px;
+}
+
+.target-empty {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 8px 0;
+}
+
+.target-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.target-row .t-name {
+    flex: 0 0 130px;
+    min-width: 0;
+}
+
+.target-row .t-url {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.target-row .t-size {
+    flex: 0 0 110px;
+}
+
+.target-row .checkbox-item {
+    flex: 0 0 auto;
+    white-space: nowrap;
 }
 
 .modal-actions {
