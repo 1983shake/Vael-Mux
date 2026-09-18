@@ -139,10 +139,10 @@
 
         if (stage === "checking") {
             if (phase === "latency") {
-                stageLabel = "阶段 1/2 · 延迟检测";
+                stageLabel = "延迟 -> 速度（单节点流水线）";
                 stageColor = LATENCY_COLOR;
             } else if (phase === "speed") {
-                stageLabel = "阶段 2/2 · 速度测试";
+                stageLabel = "延迟 -> 速度（单节点流水线）";
                 stageColor = SPEED_COLOR;
             }
         }
@@ -150,21 +150,8 @@
         $("stage-label").textContent = stageLabel;
         $("stage-dot").style.background = stageColor;
 
-        // 消息（延迟阶段不显示上限）
-        let msg = s.message || "";
-        if (stage === "checking" && phase === "latency") {
-            const total = s.total_nodes || 0;
-            const done = s.checked_nodes || 0;
-            const alive = s.alive_nodes || 0;
-            msg = `延迟检测中：${done} / ${total}，有效 ${alive}`;
-        } else if (stage === "checking" && phase === "speed") {
-            const total = s.speed_total || 0;
-            const done = s.speed_checked || 0;
-            const passed = s.speed_passed || 0;
-            const limit = s.max_speed_nodes ? ` / 上限 ${s.max_speed_nodes}` : "";
-            msg = `速度测试中：${done} / ${total}，有效 ${passed}${limit}`;
-        }
-        $("message").textContent = msg;
+        // 消息
+        $("message").textContent = s.message || "";
 
         // 主进度条
         const fill = $("progress-fill");
@@ -178,30 +165,30 @@
         $("nodes-checked").textContent = s.checked_nodes ?? 0;
         $("nodes-total").textContent = s.total_nodes ?? 0;
 
+        // 有效延迟
         $("nodes-alive").textContent = s.alive_nodes ?? 0;
 
-        $("speed-checked").textContent = s.speed_checked ?? 0;
-        $("speed-total").textContent = s.speed_total ?? 0;
+        // 有效速度
+        $("speed-passed").textContent = s.speed_passed ?? 0;
 
+        // 有效节点：有效数量 / 上限（未设置显示 ∞）
         $("valid-nodes").textContent = s.speed_passed ?? 0;
-        const maxDisplay = (s.max_speed_nodes && s.max_speed_nodes > 0)
-            ? s.max_speed_nodes
-            : (s.max_latency_nodes && s.max_latency_nodes > 0 ? s.max_latency_nodes : 0);
-        $("max-alive").textContent = maxDisplay > 0 ? maxDisplay : "∞";
+        const maxValid = s.max_valid_nodes || 0;
+        $("max-valid").textContent = maxValid > 0 ? maxValid : "∞";
 
         $("nodes-exported").textContent = s.exported_nodes ?? 0;
 
         // 速度阶段专属进度条
         const speedWrap = $("speed-progress-wrap");
-        if (stage === "checking" && phase === "speed") {
+        const spdTotal = s.speed_total || 0;
+        const spdDone = s.speed_checked || 0;
+        const spdPassed = s.speed_passed || 0;
+        if (stage === "checking" && phase === "speed" && spdTotal > 0) {
             speedWrap.classList.remove("hidden");
-            const total = s.speed_total || 0;
-            const done = s.speed_checked || 0;
-            const passed = s.speed_passed || 0;
-            const pct = total > 0 ? Math.min(1, done / total) : 0;
+            const pct = Math.min(1, spdDone / spdTotal);
             $("speed-progress-fill").style.width = `${pct * 100}%`;
             $("speed-progress-text").textContent =
-                `${done} / ${total} · 有效 ${passed}`;
+                `${spdDone} / ${spdTotal} · 有效 ${spdPassed}`;
         } else {
             speedWrap.classList.add("hidden");
         }
@@ -254,30 +241,46 @@
     }
 
     // ============================================================
-    // 表格列头（动态）
+    // 表格列头（动态，含启用/禁用状态）
     // ============================================================
     function targetsChanged(a, b) {
         if (a.length !== b.length) return true;
         for (let i = 0; i < a.length; i++) {
-            if (a[i].name !== b[i].name || a[i].url !== b[i].url) return true;
+            if (a[i].name !== b[i].name) return true;
+            if (a[i].url !== b[i].url) return true;
+            if (!!a[i].enabled !== !!b[i].enabled) return true;
         }
         return false;
     }
 
     function buildTableHeader() {
         const thead = $("node-thead");
-        const latCols = latencyTargets.map((t) => `
-            <th class="target-col target-latency" title="${escapeHtml(t.url || "")}">
-                ${escapeHtml(t.name)}
-                <span class="target-tag">延迟</span>
-            </th>
-        `).join("");
-        const spdCols = speedTargets.map((t) => `
-            <th class="target-col target-speed" title="${escapeHtml(t.url || "")}">
-                ${escapeHtml(t.name)}
-                <span class="target-tag">速度</span>
-            </th>
-        `).join("");
+
+        const latCols = latencyTargets.map((t) => {
+            const off = t.enabled === false;
+            const cls = off ? "target-col target-latency target-disabled" : "target-col target-latency";
+            const tag = off ? "已关闭" : "延迟";
+            const title = (t.url || "") + (off ? "（已关闭）" : "");
+            return `
+                <th class="${cls}" title="${escapeHtml(title)}">
+                    ${escapeHtml(t.name)}
+                    <span class="target-tag">${tag}</span>
+                </th>
+            `;
+        }).join("");
+
+        const spdCols = speedTargets.map((t) => {
+            const off = t.enabled === false;
+            const cls = off ? "target-col target-speed target-disabled" : "target-col target-speed";
+            const tag = off ? "已关闭" : "速度";
+            const title = (t.url || "") + (off ? "（已关闭）" : "");
+            return `
+                <th class="${cls}" title="${escapeHtml(title)}">
+                    ${escapeHtml(t.name)}
+                    <span class="target-tag">${tag}</span>
+                </th>
+            `;
+        }).join("");
 
         thead.innerHTML = `
             <tr>
@@ -336,10 +339,25 @@
     }
 
     function speedClass(mbps) {
-        if (mbps == null) return "lat-na";
-        if (mbps >= 10) return "lat-good";
-        if (mbps >= 3) return "lat-mid";
+        const v = Number(mbps);
+        if (!isFinite(v) || v <= 0) return "lat-na";
+        if (v >= 10) return "lat-good";
+        if (v >= 3) return "lat-mid";
         return "lat-bad";
+    }
+
+    /**
+     * 速度格式化：
+     *   < 0.1 Mbps  -> 保留 3 位小数（如 0.063）
+     *   < 1 Mbps    -> 保留 2 位小数（如 0.56）
+     *   >= 1 Mbps   -> 保留 2 位小数（如 12.34）
+     *   无效（null / <= 0 / NaN） -> null
+     */
+    function formatSpeed(mbps) {
+        const v = Number(mbps);
+        if (!isFinite(v) || v <= 0) return null;
+        if (v < 0.1) return v.toFixed(3);
+        return v.toFixed(2);
     }
 
     function renderNodes(nodes) {
@@ -358,15 +376,23 @@
             const checked = selectedIds.has(n.id) ? "checked" : "";
 
             const latCells = latencyTargets.map((t) => {
+                if (t.enabled === false) {
+                    return `<td class="lat-disabled">×</td>`;
+                }
                 const r = n.targets && n.targets.latency ? n.targets.latency[t.name] : null;
                 if (!r || r.latency_ms == null) return `<td class="lat-na">—</td>`;
                 return `<td class="${latencyClass(r.latency_ms)}">${r.latency_ms}</td>`;
             }).join("");
 
             const spdCells = speedTargets.map((t) => {
+                if (t.enabled === false) {
+                    return `<td class="lat-disabled">×</td>`;
+                }
                 const r = n.targets && n.targets.speed ? n.targets.speed[t.name] : null;
-                if (!r || r.speed_mbps == null) return `<td class="lat-na">—</td>`;
-                return `<td class="${speedClass(r.speed_mbps)}">${Number(r.speed_mbps).toFixed(1)}</td>`;
+                const v = r ? r.speed_mbps : null;
+                const text = formatSpeed(v);
+                if (text == null) return `<td class="lat-na">—</td>`;
+                return `<td class="${speedClass(v)}">${text}</td>`;
             }).join("");
 
             return `

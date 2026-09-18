@@ -44,21 +44,19 @@
                             </div>
                         </div>
                         <div class="stat">
-                            <div class="stat-label">延迟存活</div>
+                            <div class="stat-label">有效延迟</div>
                             <div class="stat-value accent" id="nodes-alive">0</div>
                         </div>
                         <div class="stat">
-                            <div class="stat-label">速度检测</div>
-                            <div class="stat-value purple">
-                                <span id="speed-checked">0</span> / <span id="speed-total">0</span>
-                            </div>
+                            <div class="stat-label">有效速度</div>
+                            <div class="stat-value purple" id="speed-passed">0</div>
                         </div>
                         <div class="stat">
                             <div class="stat-label">有效节点</div>
                             <div class="stat-value accent">
                                 <span id="valid-nodes">0</span>
                                 <span class="stat-sep">/</span>
-                                <span id="max-alive">∞</span>
+                                <span id="max-valid">∞</span>
                             </div>
                         </div>
                         <div class="stat">
@@ -71,7 +69,7 @@
                     <div class="phase-progress hidden" id="speed-progress-wrap">
                         <div class="phase-progress-label">
                             <span>速度测试进度</span>
-                            <span id="speed-progress-text">0 / 0 · 通过 0</span>
+                            <span id="speed-progress-text">0 / 0 · 有效 0</span>
                         </div>
                         <div class="progress-bar slim">
                             <div class="progress-fill purple" id="speed-progress-fill"></div>

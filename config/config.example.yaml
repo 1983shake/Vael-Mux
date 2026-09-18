@@ -8,6 +8,14 @@ server:
   api_port: 8110          # API / 订阅输出端口
 
 # ============================================================
+# 日志设置
+# ============================================================
+logging:
+  # 日志级别：DEBUG / INFO / WARNING / ERROR / CRITICAL
+  # 环境变量 VAEL_LOG_LEVEL 优先级更高（若设置则覆盖此处）
+  level: INFO
+
+# ============================================================
 # 订阅源列表
 # ============================================================
 subscriptions: |
@@ -25,46 +33,53 @@ subscriptions: |
 # 检测参数
 # ============================================================
 check:
-  concurrent: 50                # 延迟测试并发节点数
+  concurrent: 50                # 节点并发数（同时进行"延迟 -> 速度"完整流程的节点数）
   timeout_ms: 5000              # 单次 TCP 连接超时 (毫秒)
   samples: 3                    # 节点自身的延迟采样次数
-  speed_concurrency: 10         # 速度测试并发节点数
 
   # 是否将 store 中的历史节点并入本轮测试：
   #   - true：拉取订阅后，把历史节点（不在新节点中的）加到待测列表（历史优先），
   #           测试完成后从 store 中删除历史节点，仅保留当前订阅源中的节点。
   #   - false：只测试本次订阅源解析出的节点。
-  # 该选项在服务启动的首次流水线与手动"重新更新节点"时均生效。
   include_history: false
 
-  # ---- 有效节点上限（延迟、速度分开）----
-  # 延迟阶段：延迟有效的节点数（节点自身 + 所有延迟目标都成功）达到此值时，
-  #           立即停止延迟测试。
-  # 速度阶段：速度有效的节点数（所有速度目标都成功）达到此值时，
-  #           立即停止速度测试。
-  # 0 表示对应阶段不限制。
-  max_latency_nodes: 200
-  max_speed_nodes: 50
+  # ---- 有效节点上限 ----
+  # 有效性定义：
+  #   1. 有效延迟：节点自身 + latency_targets 中所有【启用】目标 TCP 握手成功
+  #   2. 有效速度：speed_targets 中所有【启用】目标 HTTP 下载成功
+  # 只有同时满足两条的节点才计入「有效节点」。
+  # 达到此上限后立即停止后续检测。
+  # 0 表示不限制。
+  max_valid_nodes: 50
 
   # ---- 延迟测试目标（多目标）----
-  # 一个节点只有所有延迟目标都握手成功，才会进入速度阶段。
+  # enabled: true  参与检测，必须握手成功才算「有效延迟」
+  # enabled: false 完全跳过：不检测、不计入有效判定
+  # 一个节点只有所有【启用】的延迟目标都握手成功，才算「有效延迟」，才会进入速度阶段。
   latency_targets:
     - name: "CF"
       url: "https://www.cloudflare.com/cdn-cgi/trace"
+      enabled: true
     - name: "GG"
       url: "https://www.google.com/generate_204"
+      enabled: true
     - name: "GH"
       url: "https://github.com/robots.txt"
+      enabled: true
 
   # ---- 速度测试目标（多目标）----
-  # 一个节点只有所有速度目标都测速成功，才会被认定为最终有效节点。
+  # enabled: true  参与检测，必须测速成功才算「有效速度」
+  # enabled: false 完全跳过：不检测、不计入有效判定
+  # 一个节点只有所有【启用】的速度目标都测速成功，才算「有效速度」，才会计入有效节点。
   speed_targets:
     - name: "CF"
       url: "https://speed.cloudflare.com/__down?bytes=2000000"
       size_hint: 2000000
+      enabled: true
     - name: "GH"
       url: "https://raw.githubusercontent.com/git/git/master/README.md"
       size_hint: 500000
+      enabled: true
 
   schedule: "0 9,21 * * *"      # 定时任务 cron 表达式
 

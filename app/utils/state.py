@@ -30,22 +30,22 @@ class AppState:
 
     total_subscriptions: int = 0
     fetched_subscriptions: int = 0
+
+    # 延迟阶段
     total_nodes: int = 0
     checked_nodes: int = 0
-    alive_nodes: int = 0
+    alive_nodes: int = 0  # 有效延迟（节点自身 + 所有启用的延迟目标都可达）
     enabled_nodes: int = 0
-    exported_nodes: int = 0
 
     # 速度阶段
-    speed_total: int = 0
+    speed_total: int = 0  # 动态：已进入速度阶段的节点数
     speed_checked: int = 0
-    speed_passed: int = 0
+    speed_passed: int = 0  # 有效速度（== 有效节点数）
 
-    # 上限
-    max_latency_nodes: int = 0
-    max_speed_nodes: int = 0
-    max_alive: int = 0  # 显示用（= max_speed_nodes 或 max_latency_nodes）
+    # 上限 / 导出
+    max_valid_nodes: int = 0
     limit_reached: bool = False
+    exported_nodes: int = 0
 
     running: bool = False
     stop_requested: bool = False
@@ -68,14 +68,12 @@ class AppState:
             "checked_nodes": self.checked_nodes,
             "alive_nodes": self.alive_nodes,
             "enabled_nodes": self.enabled_nodes,
-            "exported_nodes": self.exported_nodes,
             "speed_total": self.speed_total,
             "speed_checked": self.speed_checked,
             "speed_passed": self.speed_passed,
-            "max_latency_nodes": self.max_latency_nodes,
-            "max_speed_nodes": self.max_speed_nodes,
-            "max_alive": self.max_alive,
+            "max_valid_nodes": self.max_valid_nodes,
             "limit_reached": self.limit_reached,
+            "exported_nodes": self.exported_nodes,
             "running": self.running,
             "stop_requested": self.stop_requested,
             "started_at": self.started_at,
@@ -107,4 +105,5 @@ class AppState:
         await self._send_all({"event": "log", **entry})
 
 
+# 模块级单例，所有模块通过 `from app.utils.state import state` 使用
 state = AppState()

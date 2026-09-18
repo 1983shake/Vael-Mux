@@ -1,4 +1,10 @@
-"""日志：标准输出 + 内存环形缓冲 + WebSocket 广播。"""
+"""日志：标准输出 + 内存环形缓冲 + WebSocket 广播。
+
+日志级别解析顺序：
+  1) 环境变量 VAEL_LOG_LEVEL（若设置）
+  2) 配置文件 logging.level
+  3) 默认 INFO
+"""
 
 import asyncio
 import logging
@@ -8,14 +14,46 @@ from collections import deque
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-_LEVEL = os.environ.get("VAEL_LOG_LEVEL", "INFO").upper()
-
 # 最近日志环形缓冲（供 Web UI 在连接时回填历史）
 LOG_BUFFER: deque = deque(maxlen=500)
 
 # 广播回调由 Web 层在启动时注入
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _broadcast_cb: Optional[Callable[[Dict[str, Any]], Any]] = None
+
+_VALID_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _resolve_level() -> str:
+    """解析日志级别：环境变量优先，其次配置文件，最后 INFO。"""
+    env = os.environ.get("VAEL_LOG_LEVEL", "").strip().upper()
+    if env in _VALID_LEVELS:
+        return env
+    try:
+        from app.config import load_base_config
+
+        cfg = load_base_config()
+        raw = (cfg.get("logging") or {}).get("level", "INFO")
+        level = str(raw or "INFO").strip().upper()
+        if level in _VALID_LEVELS:
+            return level
+    except Exception:
+        pass
+    return "INFO"
+
+
+_LEVEL = _resolve_level()
+
+
+def apply_log_level(level: Optional[str] = None) -> str:
+    """运行时应用日志级别。传入 None 时重新从配置/环境变量解析。"""
+    global _LEVEL
+    new_level = (level or _resolve_level()).strip().upper()
+    if new_level not in _VALID_LEVELS:
+        new_level = "INFO"
+    _LEVEL = new_level
+    logging.getLogger("vael-mux").setLevel(new_level)
+    return new_level
 
 
 def set_log_broadcast(
@@ -71,6 +109,7 @@ class _RingBufferHandler(logging.Handler):
 def setup_logger(name: str = "vael-mux") -> logging.Logger:
     logger = logging.getLogger(name)
     if logger.handlers:
+        logger.setLevel(_LEVEL)
         return logger
     logger.setLevel(_LEVEL)
 

@@ -25,14 +25,22 @@ def _find_config(path: str | None = None) -> Path:
     raise FileNotFoundError(f"未找到配置文件，尝试过: {[str(c) for c in candidates]}")
 
 
-def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
-    """解析 target 列表为 [{name, url, size_hint?}, ...]。
+def _to_bool(v: Any, default: bool = False) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("true", "1", "yes", "y", "on"):
+            return True
+        if s in ("false", "0", "no", "n", "off", ""):
+            return False
+    return default
 
-    支持三种写法：
-      1) 字符串（多行）：每行一个 URL，自动命名为 <prefix>1, <prefix>2 ...
-      2) 字符串列表：同上
-      3) 字典列表：[{name: "CF", url: "...", size_hint: 123}, ...]
-    """
+
+def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
+    """解析 target 列表为 [{name, url, enabled, size_hint?}, ...]。"""
     if not raw:
         return []
 
@@ -43,7 +51,7 @@ def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
             s = item.strip()
             if not s or s.startswith("#"):
                 return
-            result.append({"name": f"{prefix}{idx + 1}", "url": s})
+            result.append({"name": f"{prefix}{idx + 1}", "url": s, "enabled": True})
             return
         if isinstance(item, dict):
             url = str(item.get("url") or item.get("address") or "").strip()
@@ -52,7 +60,11 @@ def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
             name = str(item.get("name") or item.get("short") or "").strip()
             if not name:
                 name = f"{prefix}{idx + 1}"
-            entry: Dict[str, Any] = {"name": name, "url": url}
+            entry: Dict[str, Any] = {
+                "name": name,
+                "url": url,
+                "enabled": _to_bool(item.get("enabled", True), default=True),
+            }
             if "size_hint" in item:
                 try:
                     entry["size_hint"] = int(item["size_hint"])
@@ -75,18 +87,11 @@ def _parse_targets(raw: Any, prefix: str = "T") -> List[Dict[str, Any]]:
     return result
 
 
-def _to_bool(v: Any, default: bool = False) -> bool:
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, (int, float)):
-        return bool(v)
-    if isinstance(v, str):
-        s = v.strip().lower()
-        if s in ("true", "1", "yes", "y", "on"):
-            return True
-        if s in ("false", "0", "no", "n", "off", ""):
-            return False
-    return default
+def enabled_targets(targets: Any) -> List[Dict[str, Any]]:
+    """从 targets 中过滤出 enabled 的目标（缺省视为启用）。"""
+    if not targets:
+        return []
+    return [t for t in targets if isinstance(t, dict) and t.get("enabled", True)]
 
 
 def load_base_config(path: str | None = None) -> Dict[str, Any]:
@@ -100,14 +105,15 @@ def load_base_config(path: str | None = None) -> Dict[str, Any]:
     data["server"].setdefault("web_port", 8100)
     data["server"].setdefault("api_port", 8110)
 
+    data.setdefault("logging", {})
+    data["logging"].setdefault("level", "INFO")
+
     data.setdefault("check", {})
     data["check"].setdefault("concurrent", 50)
     data["check"].setdefault("timeout_ms", 5000)
     data["check"].setdefault("samples", 3)
-    data["check"].setdefault("speed_concurrency", 10)
     data["check"].setdefault("include_history", False)
-    data["check"].setdefault("max_latency_nodes", 0)
-    data["check"].setdefault("max_speed_nodes", 0)
+    data["check"].setdefault("max_valid_nodes", 0)
     data["check"].setdefault("schedule", "")
     data["check"]["latency_targets"] = _parse_targets(data["check"].get("latency_targets"), "L")
     data["check"]["speed_targets"] = _parse_targets(data["check"].get("speed_targets"), "S")

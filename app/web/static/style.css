@@ -583,6 +583,17 @@ h1 {
     letter-spacing: 0.5px;
 }
 
+/* 已关闭的测试目标列（表头 + 单元格） */
+.node-table thead th.target-col.target-disabled {
+    opacity: 0.45;
+}
+
+.node-table thead th.target-col.target-disabled .target-tag {
+    color: #ff7a7a;
+    opacity: 0.95;
+    font-weight: 600;
+}
+
 .node-table tbody td {
     padding: 9px 12px;
     border-bottom: 1px solid #1a1f2a;
@@ -662,6 +673,14 @@ h1 {
 
 .lat-na {
     color: var(--muted);
+}
+
+/* 已关闭的测试目标单元格：显示 "×"，灰色 */
+.lat-disabled {
+    color: #4a5060;
+    text-align: center;
+    font-weight: 600;
+    opacity: 0.7;
 }
 
 /* ============================================================ 分页 */

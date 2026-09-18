@@ -1,11 +1,13 @@
 """后台流水线编排：拉取 -> 解析 -> 合并存储 -> 检测 -> 导出。
 
 支持：
-  - 手动停止
-  - include_history（从 check.include_history 读取）：将 store 中的历史节点
-    并入本轮测试列表（历史在前、新节点在后），测试完成后从 store 中删除历史
-    节点，仅保留当前订阅源中的节点。
-  - 延迟、速度两阶段独立上限（max_latency_nodes / max_speed_nodes）
+  - 手动停止（通过同步保存 + create_task 调度推送，避免 cancelling 状态下 await 被中断）
+  - include_history（从 check.include_history 读取）
+  - 单一「有效节点」上限（max_valid_nodes）
+  - 单节点流水线（延迟通过 -> 立刻测速）
+  - 节点级并发（check.concurrent）
+  - 运行时应用日志级别（logging.level / VAEL_LOG_LEVEL）
+  - 目标开关（latency_targets / speed_targets 的 enabled 字段）
 """
 
 import asyncio
@@ -23,6 +25,7 @@ from app.core.fetcher import fetch_all
 from app.core.parser import parse_all
 from app.core.store import NodeStore
 from app.models import NodeRecord
+from app.utils.logger import apply_log_level
 from app.utils.state import TaskStage, state
 
 logger = logging.getLogger("vael-mux.startup")
@@ -42,13 +45,11 @@ def get_store(config: dict | None = None) -> NodeStore:
     return _store
 
 
-def _resolve_limits(config: dict) -> tuple[int, int]:
-    """解析延迟/速度上限。
+def _resolve_max_valid(config: dict) -> int:
+    """解析「有效节点」上限。
 
-    优先级：
-      max_latency_nodes / max_speed_nodes
-      -> 若都未设置，则回退到旧的 max_alive_nodes（同时用于两者）
-      -> 0 表示不限制
+    优先读 max_valid_nodes；若为 0，则回退到旧字段
+    （max_speed_nodes / max_latency_nodes / max_alive_nodes）以保持兼容。
     """
     check_cfg = config.get("check", {}) or {}
 
@@ -58,16 +59,10 @@ def _resolve_limits(config: dict) -> tuple[int, int]:
         except (TypeError, ValueError):
             return 0
 
-    max_lat = _int("max_latency_nodes")
-    max_spd = _int("max_speed_nodes")
-
-    if max_lat <= 0 and max_spd <= 0:
-        legacy = _int("max_alive_nodes")
-        if legacy > 0:
-            max_lat = legacy
-            max_spd = legacy
-
-    return max_lat, max_spd
+    v = _int("max_valid_nodes")
+    if v > 0:
+        return v
+    return _int("max_speed_nodes") or _int("max_latency_nodes") or _int("max_alive_nodes")
 
 
 def _resolve_include_history(config: dict) -> bool:
@@ -82,7 +77,7 @@ def _resolve_include_history(config: dict) -> bool:
 
 
 def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecord]:
-    """选择导出节点：启用 + 延迟有效 + 速度有效。"""
+    """选择导出节点：启用 + 有效延迟 + 有效速度。"""
     check_cfg = config.get("check", {}) or {}
     latency_targets = check_cfg.get("latency_targets", []) or []
     speed_targets = check_cfg.get("speed_targets", []) or []
@@ -142,6 +137,13 @@ def _dedupe_preserve_order(records: list[NodeRecord]) -> list[NodeRecord]:
     return result
 
 
+def _count_enabled(check_cfg: dict) -> tuple[int, int]:
+    """统计启用的延迟/速度目标数。"""
+    lat = sum(1 for t in (check_cfg.get("latency_targets") or []) if t.get("enabled", True))
+    spd = sum(1 for t in (check_cfg.get("speed_targets") or []) if t.get("enabled", True))
+    return lat, spd
+
+
 async def run_pipeline() -> None:
     """执行一次完整流水线。include_history 从配置读取。"""
     if _pipeline_lock.locked():
@@ -150,13 +152,20 @@ async def run_pipeline() -> None:
 
     async with _pipeline_lock:
         config = load_base_config()
+
+        # 应用最新日志级别（支持热更新）
+        applied = apply_log_level()
+        logger.info(f"日志级别：{applied}")
+
         urls = parse_subscriptions(config.get("subscriptions"))
         store = get_store(config)
         await store.ensure_loaded()
 
-        max_latency, max_speed = _resolve_limits(config)
-        display_max = max_speed if max_speed > 0 else max_latency
+        check_cfg = config.get("check", {}) or {}
+        max_valid = _resolve_max_valid(config)
         include_history = _resolve_include_history(config)
+        concurrent = int(check_cfg.get("concurrent", 50) or 50)
+        lat_n, spd_n = _count_enabled(check_cfg)
 
         state.running = True
         state.stop_requested = False
@@ -168,17 +177,20 @@ async def run_pipeline() -> None:
         state.total_nodes = 0
         state.checked_nodes = 0
         state.alive_nodes = 0
+        state.enabled_nodes = 0
         state.exported_nodes = 0
         state.speed_total = 0
         state.speed_checked = 0
         state.speed_passed = 0
-        state.max_latency_nodes = max_latency
-        state.max_speed_nodes = max_speed
-        state.max_alive = display_max
+        state.max_valid_nodes = max_valid
         state.limit_reached = False
 
         state.stage = TaskStage.CONFIG_LOADING.value
-        state.message = f"配置加载完成，共 {len(urls)} 个订阅源" + ("（含历史节点测试）" if include_history else "")
+        state.message = (
+            f"配置加载完成，共 {len(urls)} 个订阅源"
+            + ("（含历史节点测试）" if include_history else "")
+            + f"，节点并发 {concurrent}，启用目标：延迟 {lat_n} 个 / 速度 {spd_n} 个"
+        )
         await state.notify()
         logger.info(state.message)
 
@@ -223,12 +235,11 @@ async def run_pipeline() -> None:
             await state.notify()
             logger.info(state.message)
 
-            # ---------- 检测（两阶段）----------
+            # ---------- 检测（单节点流水线 + 节点并发）----------
             _raise_if_stopped()
             state.stage = TaskStage.CHECKING.value
             state.enabled_nodes = len(test_list)
 
-            check_cfg = config.get("check", {})
             latency_targets = check_cfg.get("latency_targets", []) or []
             speed_targets = check_cfg.get("speed_targets", []) or []
 
@@ -238,19 +249,17 @@ async def run_pipeline() -> None:
             state.speed_total = 0
             state.speed_checked = 0
             state.speed_passed = 0
-            state.message = f"阶段 1/2 · 正在检测 {len(test_list)} 个节点的延迟..."
+            state.message = f"检测中：延迟 -> 速度（上限 {max_valid or '∞'}，" f"节点并发 {concurrent}，延迟目标 {lat_n} / 速度目标 {spd_n}）"
             await state.notify()
 
             alive = await check_all(
                 test_list,
-                concurrent=int(check_cfg.get("concurrent", 50)),
+                concurrent=concurrent,
                 timeout_ms=int(check_cfg.get("timeout_ms", 5000)),
                 samples=int(check_cfg.get("samples", 3)),
                 latency_targets=latency_targets,
                 speed_targets=speed_targets,
-                speed_concurrency=int(check_cfg.get("speed_concurrency", 10)),
-                max_latency=max_latency,
-                max_speed=max_speed,
+                max_valid=max_valid,
                 progress_callback=_on_check_progress,
                 speed_progress_callback=_on_speed_progress,
             )
@@ -262,10 +271,10 @@ async def run_pipeline() -> None:
                 logger.info(f"已从节点列表清理 {removed} 个历史节点")
 
             await store.save()
-            logger.info(f"检测完成: 有效 {len(alive)} / 检测 {len(test_list)}")
+            logger.info(f"检测完成: 有效节点 {len(alive)} / 待测 {len(test_list)}")
 
             state.phase = ""
-            state.limit_reached = bool(display_max and len(alive) >= display_max)
+            state.limit_reached = bool(max_valid and len(alive) >= max_valid)
             state.speed_passed = len(alive)
 
             # ---------- 导出 ----------
@@ -288,11 +297,11 @@ async def run_pipeline() -> None:
             state.finished_at = datetime.now().isoformat(timespec="seconds")
 
             parts = [
-                f"延迟有效 {state.alive_nodes} / {len(test_list)}",
-                f"有效节点 {len(alive)}",
+                f"有效延迟 {state.alive_nodes} / {len(test_list)}",
+                f"有效速度 {len(alive)}",
             ]
-            if display_max and len(alive) >= display_max:
-                parts.append(f"已达上限 {display_max}")
+            if max_valid and len(alive) >= max_valid:
+                parts.append(f"已达上限 {max_valid}")
             parts.append(f"导出 {len(selected)} 个")
             state.message = "完成：" + "，".join(parts)
 
@@ -303,8 +312,12 @@ async def run_pipeline() -> None:
 
         except asyncio.CancelledError:
             logger.info("流水线已被手动停止")
+
+            # 关键修复：在 cancelling 状态下，任何 await 都会立即抛出 CancelledError，
+            # 导致后续清理逻辑无法执行。这里用同步保存 + create_task 调度推送，
+            # 保证状态更新和文件保存都能完成。
             try:
-                await store.save()
+                store.save_sync()
             except Exception:
                 pass
 
@@ -315,11 +328,15 @@ async def run_pipeline() -> None:
             state.phase = ""
             state.progress = 0.0
             state.finished_at = datetime.now().isoformat(timespec="seconds")
+
             try:
-                await state.notify()
-                await state.broadcast_event("nodes_updated")
+                asyncio.create_task(state.notify())
+                asyncio.create_task(state.broadcast_event("nodes_updated"))
             except Exception:
                 pass
+
+            # 保持 CancelledError 语义，让 asyncio 正确结束当前 task
+            raise
 
         except Exception as e:
             logger.exception("流水线失败")
@@ -339,22 +356,21 @@ async def _on_fetch_progress(done: int, total: int) -> None:
     await state.notify()
 
 
-async def _on_check_progress(done: int, total: int, alive: int) -> None:
+async def _on_check_progress(done: int, total: int, valid: int) -> None:
     state.checked_nodes = done
-    state.alive_nodes = alive
-    state.phase = "latency"
+    state.alive_nodes = valid
+    if state.phase != "latency":
+        state.phase = "latency"
     if total:
-        state.progress = 0.25 + 0.25 * (done / total)
+        state.progress = 0.25 + 0.45 * (done / total)
     await state.notify()
 
 
-async def _on_speed_progress(done: int, total: int, passed: int) -> None:
+async def _on_speed_progress(done: int, valid: int) -> None:
     state.speed_checked = done
-    state.speed_total = total
-    state.speed_passed = passed
-    state.phase = "speed"
-    if total:
-        state.progress = 0.50 + 0.40 * (done / total)
+    state.speed_passed = valid
+    if done > 0:
+        state.phase = "speed"
     await state.notify()
 
 

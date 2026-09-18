@@ -9,7 +9,7 @@ from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.config import load_base_config
+from app.config import enabled_targets, load_base_config
 from app.core.checker import is_fully_valid
 from app.core.startup import (
     get_store,
@@ -111,7 +111,7 @@ def _sort_records(records: List[NodeRecord]) -> List[NodeRecord]:
 
 
 def create_web_app() -> FastAPI:
-    app = FastAPI(title="Vael-Mux", version="1.5.0", lifespan=lifespan)
+    app = FastAPI(title="Vael-Mux", version="1.7.0", lifespan=lifespan)
     app.include_router(ws_router)
 
     if STATIC_DIR.exists():
@@ -168,13 +168,15 @@ def create_web_app() -> FastAPI:
     async def get_targets():
         config = load_base_config()
         check_cfg = config.get("check", {})
+        latency_targets = check_cfg.get("latency_targets", []) or []
+        speed_targets = check_cfg.get("speed_targets", []) or []
         return {
-            "latency_targets": check_cfg.get("latency_targets", []),
-            "speed_targets": check_cfg.get("speed_targets", []),
+            "latency_targets": latency_targets,
+            "speed_targets": speed_targets,
+            "latency_targets_enabled": enabled_targets(latency_targets),
+            "speed_targets_enabled": enabled_targets(speed_targets),
             "include_history": bool(check_cfg.get("include_history", False)),
-            "max_latency_nodes": state.max_latency_nodes,
-            "max_speed_nodes": state.max_speed_nodes,
-            "max_alive": state.max_alive,
+            "max_valid_nodes": state.max_valid_nodes,
         }
 
     # ----------------------------------------------------- 节点列表（后端分页）
@@ -220,6 +222,7 @@ def create_web_app() -> FastAPI:
         end = start + page_size
         page_items = items[start:end]
 
+        # 返回全部目标（含 enabled 字段），前端渲染时区分启用/禁用
         return {
             "nodes": [r.to_dict() for r in page_items],
             "total": total,
