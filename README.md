@@ -1,6 +1,3 @@
-## `README.md`
-
-```markdown
 # Vael-Mux
 
 订阅聚合 / 节点检测 / 多格式订阅输出的容器化服务。
