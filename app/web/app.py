@@ -1,14 +1,16 @@
 """Web 管理界面 (默认 8100)。"""
 
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import __version__
 from app.config import enabled_targets, load_base_config
 from app.core.checker import is_fully_valid
 from app.core.startup import (
@@ -69,6 +71,18 @@ RETEST_FIELDS = {
 CREATABLE_TYPES = {"vmess", "vless", "trojan", "ss", "hysteria2"}
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """静态文件禁用浏览器缓存，确保前端更新后立即生效。"""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+
 async def _background_bootstrap() -> None:
     try:
         await run_pipeline()
@@ -110,21 +124,55 @@ def _sort_records(records: List[NodeRecord]) -> List[NodeRecord]:
     return records
 
 
+def _asset_version() -> str:
+    """用文件 mtime 作为资源版本号，确保 app.js / style.css 更新后自动失效缓存。"""
+    parts = []
+    for name in ("app.js", "style.css"):
+        p = STATIC_DIR / name
+        try:
+            parts.append(str(int(p.stat().st_mtime)))
+        except Exception:
+            parts.append("0")
+    return "-".join(parts)
+
+
 def create_web_app() -> FastAPI:
-    app = FastAPI(title="Vael-Mux", version="1.7.0", lifespan=lifespan)
+    app = FastAPI(title="Vael-Mux", version=__version__, lifespan=lifespan)
     app.include_router(ws_router)
 
     if STATIC_DIR.exists():
-        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+        app.mount(
+            "/static",
+            NoCacheStaticFiles(directory=str(STATIC_DIR)),
+            name="static",
+        )
 
     # ----------------------------------------------------- 页面
     @app.get("/")
     async def index():
-        return FileResponse(str(STATIC_DIR / "index.html"))
+        """动态注入资源版本号，避免浏览器缓存旧版 app.js / style.css。"""
+        html_path = STATIC_DIR / "index.html"
+        html = html_path.read_text(encoding="utf-8")
+        v = _asset_version()
+        html = html.replace('href="/static/style.css"', f'href="/static/style.css?v={v}"')
+        html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={v}"')
+        return HTMLResponse(
+            html,
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/health")
     async def health():
         return {"status": "ok", "stage": state.stage}
+
+    # ----------------------------------------------------- 版本信息
+    @app.get("/api/version")
+    async def get_version():
+        return {"version": __version__}
 
     # ----------------------------------------------------- 全局状态
     @app.get("/api/state")
@@ -222,16 +270,22 @@ def create_web_app() -> FastAPI:
         end = start + page_size
         page_items = items[start:end]
 
-        # 返回全部目标（含 enabled 字段），前端渲染时区分启用/禁用
-        return {
-            "nodes": [r.to_dict() for r in page_items],
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "pages": pages,
-            "latency_targets": latency_targets,
-            "speed_targets": speed_targets,
-        }
+        return JSONResponse(
+            {
+                "nodes": [r.to_dict() for r in page_items],
+                "total": total,
+                "page": page,
+                "page_size": page_size,
+                "pages": pages,
+                "latency_targets": latency_targets,
+                "speed_targets": speed_targets,
+            },
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/api/nodes/{node_id}")
     async def get_node(node_id: str):

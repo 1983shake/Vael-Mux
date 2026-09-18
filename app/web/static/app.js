@@ -35,6 +35,10 @@
     const LOG_MAX_LINES = 500;
     const LOG_AUTOSCROLL_THRESHOLD = 40;
 
+    // 底部版权链接（按需修改）
+    const FOOTER_HOMEPAGE = "https://github.com/1983shake/Vael-Mux";
+    const FOOTER_LINK_TEXT = "项目主页";
+
     const $ = (id) => document.getElementById(id);
 
     let latencyTargets = [];
@@ -83,6 +87,31 @@
             const fmt = a.dataset.fmt;
             if (fmt) { a.href = `${base}/sub/${fmt}`; a.title = a.href; }
         });
+    }
+
+    // ============================================================
+    // 底部版权 / 链接 / 版本
+    // ============================================================
+    async function initFooter() {
+        const yearEl = $("footer-year");
+        if (yearEl) yearEl.textContent = String(new Date().getFullYear());
+
+        const linkEl = $("footer-link");
+        if (linkEl) {
+            linkEl.href = FOOTER_HOMEPAGE;
+            linkEl.textContent = FOOTER_LINK_TEXT;
+        }
+
+        const verEl = $("footer-version");
+        if (!verEl) return;
+        try {
+            const resp = await fetch("/api/version");
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const data = await resp.json();
+            verEl.textContent = data.version || "—";
+        } catch (_) {
+            verEl.textContent = "—";
+        }
     }
 
     // ============================================================
@@ -242,6 +271,7 @@
 
     // ============================================================
     // 表格列头（动态，含启用/禁用状态）
+    // 单位只显示在表头，节点单元格只显示数值
     // ============================================================
     function targetsChanged(a, b) {
         if (a.length !== b.length) return true;
@@ -259,7 +289,7 @@
         const latCols = latencyTargets.map((t) => {
             const off = t.enabled === false;
             const cls = off ? "target-col target-latency target-disabled" : "target-col target-latency";
-            const tag = off ? "已关闭" : "延迟";
+            const tag = off ? "已关闭" : "延迟 (ms)";
             const title = (t.url || "") + (off ? "（已关闭）" : "");
             return `
                 <th class="${cls}" title="${escapeHtml(title)}">
@@ -272,7 +302,7 @@
         const spdCols = speedTargets.map((t) => {
             const off = t.enabled === false;
             const cls = off ? "target-col target-speed target-disabled" : "target-col target-speed";
-            const tag = off ? "已关闭" : "速度";
+            const tag = off ? "已关闭" : "速度 (Mbps)";
             const title = (t.url || "") + (off ? "（已关闭）" : "");
             return `
                 <th class="${cls}" title="${escapeHtml(title)}">
@@ -304,8 +334,9 @@
                 page_size: String(pageSize),
                 search: $("node-search").value.trim(),
                 filter: $("node-filter").value,
+                _t: String(Date.now()),   // 防浏览器缓存
             });
-            const resp = await fetch(`/api/nodes?${params}`);
+            const resp = await fetch(`/api/nodes?${params}`, { cache: "no-store" });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const data = await resp.json();
 
@@ -349,8 +380,7 @@
     /**
      * 速度格式化：
      *   < 0.1 Mbps  -> 保留 3 位小数（如 0.063）
-     *   < 1 Mbps    -> 保留 2 位小数（如 0.56）
-     *   >= 1 Mbps   -> 保留 2 位小数（如 12.34）
+     *   >= 0.1 Mbps -> 保留 2 位小数（如 0.56 / 12.34）
      *   无效（null / <= 0 / NaN） -> null
      */
     function formatSpeed(mbps) {
@@ -381,6 +411,7 @@
                 }
                 const r = n.targets && n.targets.latency ? n.targets.latency[t.name] : null;
                 if (!r || r.latency_ms == null) return `<td class="lat-na">—</td>`;
+                // 只显示数值，单位在表头
                 return `<td class="${latencyClass(r.latency_ms)}">${r.latency_ms}</td>`;
             }).join("");
 
@@ -392,6 +423,7 @@
                 const v = r ? r.speed_mbps : null;
                 const text = formatSpeed(v);
                 if (text == null) return `<td class="lat-na">—</td>`;
+                // 只显示数值，单位在表头
                 return `<td class="${speedClass(v)}">${text}</td>`;
             }).join("");
 
@@ -836,6 +868,7 @@
     setupApiLinks();
     initPageSizeSelect();
     initLogView();
+    initFooter();
     bind();
     buildTableHeader();
     connect();

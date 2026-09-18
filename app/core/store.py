@@ -66,6 +66,17 @@ class NodeStore:
         async with self._lock:
             self._save_sync()
 
+    def save_sync(self) -> None:
+        """同步保存，用于任务取消等无法 await 的场景。
+
+        注意：不获取异步锁，调用方需确保此时没有并发的 save()。
+        在流水线取消的清理阶段调用是安全的。
+        """
+        try:
+            self._save_sync()
+        except Exception as e:
+            logger.error(f"同步保存节点失败: {e}")
+
     # ---------- 读取 ----------
     async def all(self) -> List[NodeRecord]:
         await self.ensure_loaded()
@@ -100,6 +111,38 @@ class NodeStore:
                     rec.created_at = datetime.now().isoformat(timespec="seconds")
                 rec.touch()
                 self._nodes[rec.id] = rec
+
+    async def replace_all(
+        self,
+        records: List[NodeRecord],
+        preserve_user_state: bool = True,
+    ) -> None:
+        """清空存储，用新记录整体替换（先清空，再导入）。
+
+        preserve_user_state=True 时，对同 ID 的已有节点保留：
+          - name      用户对节点显示名的自定义
+          - enabled   用户对节点启用/禁用的选择
+          - created_at 首次入库时间
+
+        targets / latency_ms / speed_cps 等测试数据使用新记录中的本次检测结果。
+        """
+        await self.ensure_loaded()
+        async with self._lock:
+            old_map = self._nodes if preserve_user_state else {}
+            new_map: Dict[str, NodeRecord] = {}
+            now = datetime.now().isoformat(timespec="seconds")
+            for rec in records:
+                rec.ensure_id()
+                old = old_map.get(rec.id)
+                if old is not None:
+                    rec.name = old.name or rec.name
+                    rec.enabled = old.enabled
+                    rec.created_at = old.created_at or rec.created_at or now
+                elif not rec.created_at:
+                    rec.created_at = now
+                rec.touch()
+                new_map[rec.id] = rec
+            self._nodes = new_map
 
     async def update(self, node_id: str, patch: Dict) -> Optional[NodeRecord]:
         await self.ensure_loaded()
