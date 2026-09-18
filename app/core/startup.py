@@ -1,9 +1,11 @@
 """后台流水线编排：拉取 -> 解析 -> 检测 -> 导出 -> 清空重导入。
 
 核心语义：
-  - 只有流水线**正常走到导出成功**后，才清空 store 并写入本次订阅源节点
+  - 只有流水线**正常走到导出成功**后，才清空 store 并写入本次有效节点
   - 若中途失败或被手动停止：store 保持不变（不导入任何新节点）
-  - include_history=True 时，历史节点仅参与检测，不写入最终 store
+  - include_history=True 时，历史节点仅参与检测，不写入最终 store、不导出
+  - 导出数量 = 本次订阅源中的有效节点数，由 check.max_valid_nodes 唯一决定
+    （不再叠加 output.max_nodes 的二次截断）
   - 目标开关（latency_targets / speed_targets 的 enabled 字段）
   - 运行时应用日志级别（logging.level / VAEL_LOG_LEVEL）
 """
@@ -75,20 +77,25 @@ def _resolve_include_history(config: dict) -> bool:
 
 
 def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecord]:
-    """选择导出节点：启用 + 有效延迟 + 有效速度。"""
+    """从一批记录中筛选导出节点：启用 + 有效延迟 + 有效速度。
+
+    排序规则：延迟升序，其次速度降序。
+    不做 output.max_nodes 截断——导出数量由 check.max_valid_nodes 决定。
+    """
     check_cfg = config.get("check", {}) or {}
     latency_targets = check_cfg.get("latency_targets", []) or []
     speed_targets = check_cfg.get("speed_targets", []) or []
 
     valid = [r for r in records if r.enabled and is_fully_valid(r, latency_targets, speed_targets)]
     valid.sort(key=lambda r: (r.latency_ms or 10**9, -(r.speed_cps or 0)))
-    max_n = int(config.get("output", {}).get("max_nodes", 0) or 0)
-    if max_n > 0:
-        valid = valid[:max_n]
     return valid
 
 
 async def regenerate_subscriptions(config: dict | None = None) -> list[str]:
+    """重新生成订阅文件（供手动增删改节点 / 重测后调用）。
+
+    导出数量 = store 中所有有效节点数，不做额外上限截断。
+    """
     cfg = config or load_base_config()
     store = get_store(cfg)
     records = await store.all()
@@ -147,10 +154,10 @@ async def run_pipeline() -> None:
 
     流程：
       1. 拉取订阅源
-      2. 解析节点（**不写入 store**）
+      2. 解析节点（不写入 store）
       3. 检测（延迟 -> 速度），历史节点仅参与检测
-      4. 导出（基于本次检测结果）
-      5. 导出成功 → 清空 store，写入本次订阅源节点
+      4. 导出（= 本次订阅源中的有效节点，数量由 check.max_valid_nodes 决定）
+      5. 导出成功 → 清空 store，写入有效节点
 
     若中途失败或被手动停止：
       store 保持不变（旧节点列表完整保留，不导入新节点）
@@ -224,10 +231,10 @@ async def run_pipeline() -> None:
 
             parsed = parse_all(raw_texts)
             new_records = [NodeRecord.from_dict(item) for item in parsed]
-
-            # 判断历史节点（仅用于检测，不写入最终 store）
-            all_stored = await store.all()
             new_ids = {r.id for r in new_records}
+
+            # 历史节点（仅用于检测，不写入最终 store、不导出）
+            all_stored = await store.all()
             history_records = [r for r in all_stored if r.id not in new_ids] if include_history else []
 
             history_enabled = [r for r in history_records if r.enabled]
@@ -272,33 +279,44 @@ async def run_pipeline() -> None:
                 speed_progress_callback=_on_speed_progress,
             )
 
-            logger.info(f"检测完成: 有效节点 {len(alive)} / 待测 {len(test_list)}")
+            logger.info(f"检测完成: 通过节点 {len(alive)} / 待测 {len(test_list)}")
 
-            state.phase = ""
-            state.limit_reached = bool(max_valid and len(alive) >= max_valid)
-            state.speed_passed = len(alive)
-
-            # ---------- 导出（基于本次检测结果，不依赖 store）----------
+            # ---------- 导出 ----------
+            # alive 已按 max_valid_nodes 截断。
+            # 过滤历史节点：只保留本次订阅源中的有效节点。
+            # 导出数量 = 该列表长度，不再受 output.max_nodes 二次限制。
             _raise_if_stopped()
             state.stage = TaskStage.EXPORTING.value
             state.message = "正在生成订阅文件..."
             state.progress = 0.92
             await state.notify()
 
-            selected = select_exportable(new_records, config)
-            await export_all([r.to_dict() for r in selected], config.get("output", {}))
-            state.exported_nodes = len(selected)
-            logger.info(f"已导出 {len(selected)} 个节点")
+            valid_list = [r for r in alive if r.id in new_ids]
 
-            # ---------- 导出成功 → 清空 store，写入本次订阅源节点 ----------
-            await store.replace_all(new_records, preserve_user_state=True)
+            await export_all(
+                [r.to_dict() for r in valid_list],
+                config.get("output", {}),
+            )
+
+            state.exported_nodes = len(valid_list)
+            # UI 显示的有效速度 / 有效节点 = 实际导出的有效节点数
+            state.speed_passed = len(valid_list)
+            state.alive_nodes = len(valid_list)
+
+            logger.info(f"已导出 {len(valid_list)} 个有效节点" + (f"（上限 max_valid_nodes={max_valid}）" if max_valid else ""))
+
+            # ---------- 导出成功 → 清空 store，写入有效节点 ----------
+            await store.replace_all(valid_list, preserve_user_state=True)
             await store.save()
             logger.info(
-                f"已更新节点列表: 本次导入 {len(new_records)} 个节点"
-                + (f"（含 {len(history_records)} 个历史节点已移除）" if include_history and history_records else "")
+                f"已更新节点列表: 导入 {len(valid_list)} 个有效节点"
+                + (f"（上限 max_valid_nodes={max_valid}）" if max_valid else "")
+                + (f"，历史节点 {len(history_records)} 个已移除" if include_history and history_records else "")
             )
 
             # ---------- 完成 ----------
+            state.phase = ""
+            state.limit_reached = bool(max_valid and len(valid_list) >= max_valid)
             state.stage = TaskStage.IDLE.value
             state.progress = 1.0
             state.running = False
@@ -306,21 +324,21 @@ async def run_pipeline() -> None:
             state.finished_at = datetime.now().isoformat(timespec="seconds")
 
             parts = [
-                f"有效延迟 {state.alive_nodes} / {len(test_list)}",
-                f"有效节点 {len(alive)}",
+                f"有效延迟 {len(valid_list)} / {len(test_list)}",
+                f"有效节点 {len(valid_list)}",
             ]
-            if max_valid and len(alive) >= max_valid:
+            if max_valid and len(valid_list) >= max_valid:
                 parts.append(f"已达上限 {max_valid}")
-            parts.append(f"导出 {len(selected)} 个")
+            parts.append(f"导出 {len(valid_list)} 个")
             state.message = "完成：" + "，".join(parts)
 
             await state.notify()
             await state.broadcast_event("nodes_updated")
 
-            await _notify_webhook(config, len(alive), len(test_list))
+            await _notify_webhook(config, len(valid_list), len(test_list))
 
         except asyncio.CancelledError:
-            # 手动停止：**不修改 store**，保留原有节点列表
+            # 手动停止：不修改 store，保留原有节点列表
             logger.info("流水线已被手动停止，节点列表保持不变")
 
             state.stage = TaskStage.STOPPED.value
@@ -339,7 +357,7 @@ async def run_pipeline() -> None:
             raise
 
         except Exception as e:
-            # 失败：**不修改 store**，保留原有节点列表
+            # 失败：不修改 store，保留原有节点列表
             logger.exception("流水线失败，节点列表保持不变")
 
             state.stage = TaskStage.ERROR.value

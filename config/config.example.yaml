@@ -38,24 +38,25 @@ check:
   samples: 3                    # 节点自身的延迟采样次数
 
   # 是否将 store 中的历史节点并入本轮测试：
-  #   - true：拉取订阅后，把历史节点（不在新节点中的）加到待测列表（历史优先），
-  #           测试完成后从 store 中删除历史节点，仅保留当前订阅源中的节点。
+  #   - true：拉取订阅后，把历史节点（不在新节点中的）加到待测列表（历史优先）。
+  #           历史节点仅参与检测，不会写入最终 store，也不会导出。
   #   - false：只测试本次订阅源解析出的节点。
   include_history: false
 
   # ---- 有效节点上限 ----
   # 有效性定义：
   #   1. 有效延迟：节点自身 + latency_targets 中所有【启用】目标 TCP 握手成功
-  #   2. 有效速度：speed_targets 中所有【启用】目标 HTTP 下载成功
+  #   2. 有效速度：speed_targets 中所有【启用】目标 HTTP 下载成功（> 0 Mbps）
   # 只有同时满足两条的节点才计入「有效节点」。
   # 达到此上限后立即停止后续检测。
+  # 此值同时决定：
+  #   - 节点列表（store）里保存的节点数
+  #   - 订阅文件（v2ray.txt / mihomo.yaml / ...）导出的节点数
+  #   - Web 界面显示的有效节点数
   # 0 表示不限制。
   max_valid_nodes: 50
 
   # ---- 延迟测试目标（多目标）----
-  # enabled: true  参与检测，必须握手成功才算「有效延迟」
-  # enabled: false 完全跳过：不检测、不计入有效判定
-  # 一个节点只有所有【启用】的延迟目标都握手成功，才算「有效延迟」，才会进入速度阶段。
   latency_targets:
     - name: "CF"
       url: "https://www.cloudflare.com/cdn-cgi/trace"
@@ -68,9 +69,6 @@ check:
       enabled: true
 
   # ---- 速度测试目标（多目标）----
-  # enabled: true  参与检测，必须测速成功才算「有效速度」
-  # enabled: false 完全跳过：不检测、不计入有效判定
-  # 一个节点只有所有【启用】的速度目标都测速成功，才算「有效速度」，才会计入有效节点。
   speed_targets:
     - name: "CF"
       url: "https://speed.cloudflare.com/__down?bytes=2000000"
@@ -85,7 +83,9 @@ check:
 
 # -------- 输出设置 --------
 output:
-  max_nodes: 50                 # 导出上限（0 表示不限制）
+  # 注：output.max_nodes 已废弃，不再作为独立导出上限。
+  #     导出数量由 check.max_valid_nodes 决定，两者保持一致。
+  #     如需限制导出数量，请调小 check.max_valid_nodes。
   formats:
     - mihomo
     - singbox
