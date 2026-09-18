@@ -58,6 +58,18 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------- 格式判定
+_URI_SCHEMES = (
+    "vmess://",
+    "vless://",
+    "trojan://",
+    "ss://",
+    "ssr://",
+    "hysteria2://",
+    "hy2://",
+    "tuic://",
+)
+
+
 def _looks_like_yaml(text: str) -> bool:
     for line in text.splitlines()[:20]:
         s = line.strip()
@@ -67,10 +79,8 @@ def _looks_like_yaml(text: str) -> bool:
 
 
 def _looks_like_uri_list(text: str) -> bool:
-    schemes = ("vmess://", "vless://", "trojan://", "ss://", "ssr://", "hysteria2://", "hy2://", "tuic://")
     for line in text.splitlines()[:50]:
-        s = line.strip()
-        if s.startswith(schemes):
+        if line.strip().startswith(_URI_SCHEMES):
             return True
     return False
 
@@ -210,9 +220,7 @@ def _parse_ss(uri: str) -> Optional[Dict[str, Any]]:
     if "#" in payload:
         payload = payload.split("#", 1)[0]
     decoded = _try_b64_decode(payload)
-    if not decoded:
-        return None
-    if "@" not in decoded:
+    if not decoded or "@" not in decoded:
         return None
     creds, _, hostpart = decoded.rpartition("@")
     method, _, password = creds.partition(":")
@@ -263,7 +271,8 @@ _CLASH_TYPE_MAP = {
 
 def _normalize_clash_proxy(proxy: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(proxy)
-    p["type"] = _CLASH_TYPE_MAP.get(str(p.get("type", "")).lower(), str(p.get("type", "")).lower())
+    raw_type = str(p.get("type", "")).lower()
+    p["type"] = _CLASH_TYPE_MAP.get(raw_type, raw_type)
     return p
 
 
@@ -272,7 +281,12 @@ def dedupe(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     seen = set()
     result = []
     for n in nodes:
-        key = (n.get("type"), n.get("server"), n.get("port"), n.get("uuid") or n.get("password"))
+        key = (
+            n.get("type"),
+            n.get("server"),
+            n.get("port"),
+            n.get("uuid") or n.get("password"),
+        )
         if key in seen:
             continue
         seen.add(key)

@@ -13,7 +13,7 @@ import sys
 import uvicorn
 
 from app.config import load_base_config
-from app.utils.logger import logger
+from app.utils.runtime import logger
 from app.web.api import create_api_app
 from app.web.app import create_web_app
 

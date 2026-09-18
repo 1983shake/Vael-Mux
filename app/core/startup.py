@@ -5,7 +5,6 @@
   - 若中途失败或被手动停止：store 保持不变（不导入任何新节点）
   - include_history=True 时，历史节点仅参与检测，不写入最终 store、不导出
   - 导出数量 = 本次订阅源中的有效节点数，由 check.max_valid_nodes 唯一决定
-    （不再叠加 output.max_nodes 的二次截断）
   - 目标开关（latency_targets / speed_targets 的 enabled 字段）
   - 运行时应用日志级别（logging.level / VAEL_LOG_LEVEL）
 """
@@ -25,8 +24,7 @@ from app.core.fetcher import fetch_all
 from app.core.parser import parse_all
 from app.core.store import NodeStore
 from app.models import NodeRecord
-from app.utils.logger import apply_log_level
-from app.utils.state import TaskStage, state
+from app.utils.runtime import TaskStage, apply_log_level, state
 
 logger = logging.getLogger("vael-mux.startup")
 
@@ -150,18 +148,7 @@ def _count_enabled(check_cfg: dict) -> tuple[int, int]:
 
 
 async def run_pipeline() -> None:
-    """执行一次完整流水线。
-
-    流程：
-      1. 拉取订阅源
-      2. 解析节点（不写入 store）
-      3. 检测（延迟 -> 速度），历史节点仅参与检测
-      4. 导出（= 本次订阅源中的有效节点，数量由 check.max_valid_nodes 决定）
-      5. 导出成功 → 清空 store，写入有效节点
-
-    若中途失败或被手动停止：
-      store 保持不变（旧节点列表完整保留，不导入新节点）
-    """
+    """执行一次完整流水线（拉取 -> 解析 -> 检测 -> 导出 -> 清空重导入）。"""
     if _pipeline_lock.locked():
         logger.info("流水线正在运行，跳过本次触发")
         return
@@ -169,7 +156,6 @@ async def run_pipeline() -> None:
     async with _pipeline_lock:
         config = load_base_config()
 
-        # 应用最新日志级别（支持热更新）
         applied = apply_log_level()
         logger.info(f"日志级别：{applied}")
 
@@ -183,24 +169,7 @@ async def run_pipeline() -> None:
         concurrent = int(check_cfg.get("concurrent", 50) or 50)
         lat_n, spd_n = _count_enabled(check_cfg)
 
-        state.running = True
-        state.stop_requested = False
-        state.phase = ""
-        state.started_at = datetime.now().isoformat(timespec="seconds")
-        state.finished_at = None
-        state.total_subscriptions = len(urls)
-        state.fetched_subscriptions = 0
-        state.total_nodes = 0
-        state.checked_nodes = 0
-        state.alive_nodes = 0
-        state.enabled_nodes = 0
-        state.exported_nodes = 0
-        state.speed_total = 0
-        state.speed_checked = 0
-        state.speed_passed = 0
-        state.max_valid_nodes = max_valid
-        state.limit_reached = False
-
+        state.reset_run(total_subscriptions=len(urls), max_valid=max_valid)
         state.stage = TaskStage.CONFIG_LOADING.value
         state.message = (
             f"配置加载完成，共 {len(urls)} 个订阅源"
@@ -237,10 +206,7 @@ async def run_pipeline() -> None:
             all_stored = await store.all()
             history_records = [r for r in all_stored if r.id not in new_ids] if include_history else []
 
-            history_enabled = [r for r in history_records if r.enabled]
-            new_enabled = [r for r in new_records if r.enabled]
-            test_list = _dedupe_preserve_order(history_enabled + new_enabled)
-
+            test_list = _dedupe_preserve_order([r for r in history_records if r.enabled] + [r for r in new_records if r.enabled])
             state.total_nodes = len(test_list)
 
             if include_history and history_records:
@@ -259,11 +225,6 @@ async def run_pipeline() -> None:
             speed_targets = check_cfg.get("speed_targets", []) or []
 
             state.phase = "latency"
-            state.checked_nodes = 0
-            state.alive_nodes = 0
-            state.speed_total = 0
-            state.speed_checked = 0
-            state.speed_passed = 0
             state.message = f"检测中：延迟 -> 速度（上限 {max_valid or '∞'}，" f"节点并发 {concurrent}，延迟目标 {lat_n} / 速度目标 {spd_n}）"
             await state.notify()
 
@@ -282,9 +243,8 @@ async def run_pipeline() -> None:
             logger.info(f"检测完成: 通过节点 {len(alive)} / 待测 {len(test_list)}")
 
             # ---------- 导出 ----------
-            # alive 已按 max_valid_nodes 截断。
-            # 过滤历史节点：只保留本次订阅源中的有效节点。
-            # 导出数量 = 该列表长度，不再受 output.max_nodes 二次限制。
+            # alive 已按 max_valid_nodes 截断；
+            # 过滤掉历史节点，只保留本次订阅源中的有效节点。
             _raise_if_stopped()
             state.stage = TaskStage.EXPORTING.value
             state.message = "正在生成订阅文件..."
@@ -293,13 +253,9 @@ async def run_pipeline() -> None:
 
             valid_list = [r for r in alive if r.id in new_ids]
 
-            await export_all(
-                [r.to_dict() for r in valid_list],
-                config.get("output", {}),
-            )
+            await export_all([r.to_dict() for r in valid_list], config.get("output", {}))
 
             state.exported_nodes = len(valid_list)
-            # UI 显示的有效速度 / 有效节点 = 实际导出的有效节点数
             state.speed_passed = len(valid_list)
             state.alive_nodes = len(valid_list)
 
@@ -334,13 +290,11 @@ async def run_pipeline() -> None:
 
             await state.notify()
             await state.broadcast_event("nodes_updated")
-
             await _notify_webhook(config, len(valid_list), len(test_list))
 
         except asyncio.CancelledError:
             # 手动停止：不修改 store，保留原有节点列表
             logger.info("流水线已被手动停止，节点列表保持不变")
-
             state.stage = TaskStage.STOPPED.value
             state.message = "已手动停止（节点列表未变更）"
             state.running = False
@@ -348,18 +302,15 @@ async def run_pipeline() -> None:
             state.phase = ""
             state.progress = 0.0
             state.finished_at = datetime.now().isoformat(timespec="seconds")
-
             try:
                 asyncio.create_task(state.notify())
             except Exception:
                 pass
-
             raise
 
         except Exception as e:
             # 失败：不修改 store，保留原有节点列表
             logger.exception("流水线失败，节点列表保持不变")
-
             state.stage = TaskStage.ERROR.value
             state.message = f"执行失败：{e}（节点列表未变更）"
             state.running = False
@@ -444,7 +395,7 @@ async def _scheduled_run() -> None:
 
 
 def trigger_now() -> None:
-    """立即触发一次流水线。include_history 从配置读取。"""
+    """立即触发一次流水线。"""
     global _current_task
     if state.running:
         logger.info("已有任务运行中，忽略本次触发")

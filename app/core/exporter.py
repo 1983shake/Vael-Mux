@@ -3,10 +3,9 @@
 输出格式：
   - mihomo      : Clash.Meta / Mihomo YAML
   - singbox     : sing-box JSON
-  - base64      : 通用 Base64 URI 列表（vmess/vless/trojan/ss/... 原始分享链接）
-  - v2ray       : v2rayN / v2rayNG / v2rayA 订阅（内容与 base64 相同，
-                  但单独文件便于客户端识别与路由分发）
-  - v2ray-json  : v2ray 完整 config.json（含 inbounds / outbounds / routing）
+  - base64      : 通用 Base64 URI 列表
+  - v2ray       : v2rayN / v2rayNG / v2rayA 订阅（内容与 base64 相同）
+  - v2ray-json  : v2ray 完整 config.json
 
 URI 生成策略：
   - 优先使用节点自带的 raw（从 URI 订阅源解析而来）
@@ -14,10 +13,10 @@ URI 生成策略：
     根据节点字段反向生成标准分享链接
   - 字段缺失无法生成的节点会被跳过，并打印 warning，方便排查
 
-数量一致性：
-  - 每种格式写入前先统计实际能导出的节点数
-  - export_all 打印各格式的导出数量，与传入的节点总数对比
-  - 若某格式数量少于总数，会提示原因
+性能：
+  - 每种格式只遍历一次 nodes；被跳过的节点在遍历中顺手收集，
+    不再二次调用 _to_xxx() 反推。
+  - base64 与 v2ray 共享同一次 URI 收集与 base64 编码结果。
 """
 
 import base64
@@ -41,64 +40,84 @@ async def export_all(nodes: List[Dict[str, Any]], output_cfg: Dict[str, Any]) ->
     total = len(nodes)
     counts: Dict[str, int] = {}
 
+    # ---------- mihomo ----------
     if "mihomo" in formats or "clash" in formats:
-        ok = [n for n in nodes if _to_mihomo(n) is not None]
-        counts["mihomo.yaml"] = len(ok)
+        proxies: List[Dict[str, Any]] = []
+        names: List[str] = []
+        skipped: List[str] = []
+        for n in nodes:
+            p = _to_mihomo(n)
+            if p is None:
+                skipped.append(_label(n))
+                continue
+            proxies.append(p)
+            names.append(p["name"])
         path = out_dir / "mihomo.yaml"
-        path.write_text(export_mihomo(ok), encoding="utf-8")
+        path.write_text(_dump_mihomo(proxies, names), encoding="utf-8")
         written.append(str(path))
-        _log_count("mihomo.yaml", len(ok), total, nodes)
+        counts["mihomo.yaml"] = len(proxies)
+        _warn_skipped("mihomo.yaml", total, len(proxies), skipped)
 
+    # ---------- singbox ----------
     if "singbox" in formats or "sing-box" in formats:
-        ok = [n for n in nodes if _to_singbox(n) is not None]
-        counts["singbox.json"] = len(ok)
+        outbounds: List[Dict[str, Any]] = []
+        tags: List[str] = []
+        skipped: List[str] = []
+        for n in nodes:
+            ob = _to_singbox(n)
+            if ob is None or not ob.get("tag"):
+                skipped.append(_label(n))
+                continue
+            outbounds.append(ob)
+            tags.append(ob["tag"])
         path = out_dir / "singbox.json"
-        path.write_text(export_singbox(ok), encoding="utf-8")
+        path.write_text(_dump_singbox(outbounds, tags), encoding="utf-8")
         written.append(str(path))
-        _log_count("singbox.json", len(ok), total, nodes)
+        counts["singbox.json"] = len(outbounds)
+        _warn_skipped("singbox.json", total, len(outbounds), skipped)
 
-    if "base64" in formats:
+    # ---------- base64 / v2ray（共享同一次编码结果）----------
+    if "base64" in formats or "v2ray" in formats:
         uris = _collect_uris(nodes)
-        counts["base64.txt"] = len(uris)
-        path = out_dir / "base64.txt"
-        path.write_text(
-            base64.b64encode("\n".join(uris).encode("utf-8")).decode("ascii"),
-            encoding="utf-8",
-        )
-        written.append(str(path))
-        _log_count("base64.txt", len(uris), total, nodes)
+        encoded = base64.b64encode("\n".join(uris).encode("utf-8")).decode("ascii")
+        if "base64" in formats:
+            path = out_dir / "base64.txt"
+            path.write_text(encoded, encoding="utf-8")
+            written.append(str(path))
+            counts["base64.txt"] = len(uris)
+            _warn_skipped("base64.txt", total, len(uris), _collect_skipped(nodes))
+        if "v2ray" in formats:
+            path = out_dir / "v2ray.txt"
+            path.write_text(encoded, encoding="utf-8")
+            written.append(str(path))
+            counts["v2ray.txt"] = len(uris)
+            _warn_skipped("v2ray.txt", total, len(uris), _collect_skipped(nodes))
 
-    if "v2ray" in formats:
-        uris = _collect_uris(nodes)
-        counts["v2ray.txt"] = len(uris)
-        path = out_dir / "v2ray.txt"
-        path.write_text(
-            base64.b64encode("\n".join(uris).encode("utf-8")).decode("ascii"),
-            encoding="utf-8",
-        )
-        written.append(str(path))
-        _log_count("v2ray.txt", len(uris), total, nodes)
-
+    # ---------- v2ray-json ----------
     if "v2ray-json" in formats or "v2ray_json" in formats:
-        ok = [n for n in nodes if _to_v2ray_outbound(n) is not None]
-        counts["v2ray.json"] = len(ok)
+        outbounds: List[Dict[str, Any]] = []
+        skipped: List[str] = []
+        for n in nodes:
+            ob = _to_v2ray_outbound(n)
+            if ob is None:
+                skipped.append(_label(n))
+                continue
+            outbounds.append(ob)
         path = out_dir / "v2ray.json"
-        path.write_text(export_v2ray_json(ok), encoding="utf-8")
+        path.write_text(_dump_v2ray_json(outbounds), encoding="utf-8")
         written.append(str(path))
-        _log_count("v2ray.json", len(ok), total, nodes)
+        counts["v2ray.json"] = len(outbounds)
+        _warn_skipped("v2ray.json", total, len(outbounds), skipped)
 
-    # 汇总
+    # ---------- 汇总 ----------
     if total == 0:
         logger.info("无有效节点，所有订阅文件已清空")
     else:
         summary = ", ".join(f"{k}={v}" for k, v in counts.items())
         logger.info(f"导出完成：输入 {total} 个有效节点，各格式导出数量：{summary}")
-
-        # 若有格式少于总数，提示原因
-        min_count = min(counts.values()) if counts else total
-        if min_count < total:
+        if counts and min(counts.values()) < total:
             logger.warning(
-                f"各格式导出数量不一致（最少 {min_count} / 总数 {total}）。"
+                f"各格式导出数量不一致（最少 {min(counts.values())} / 总数 {total}）。"
                 f"常见原因：hysteria2 不被 v2ray.json 支持；"
                 f"或节点缺少 uuid / password / cipher 等字段。"
             )
@@ -106,42 +125,19 @@ async def export_all(nodes: List[Dict[str, Any]], output_cfg: Dict[str, Any]) ->
     return written
 
 
-def _log_count(fmt: str, exported: int, total: int, nodes: List[Dict[str, Any]]) -> None:
-    """记录单个格式的导出数量，不一致时打印被跳过的节点名。"""
-    if exported == total:
+def _label(n: Dict[str, Any]) -> str:
+    return str(n.get("name") or n.get("server") or "?")
+
+
+def _warn_skipped(fmt: str, total: int, exported: int, skipped: List[str]) -> None:
+    if exported >= total:
         return
-    skipped = total - exported
-    # 找出未能导出的节点名（最多列 5 个）
-    skipped_names: List[str] = []
-    for n in nodes:
-        ok = False
-        if fmt == "mihomo.yaml":
-            ok = _to_mihomo(n) is not None
-        elif fmt == "singbox.json":
-            ok = _to_singbox(n) is not None
-        elif fmt == "v2ray.json":
-            ok = _to_v2ray_outbound(n) is not None
-        elif fmt in ("base64.txt", "v2ray.txt"):
-            ok = bool(n.get("raw")) or (_node_to_uri(n) is not None)
-        if not ok:
-            skipped_names.append(str(n.get("name") or n.get("server") or "?"))
-            if len(skipped_names) >= 5:
-                break
-    sample = ", ".join(skipped_names) if skipped_names else "(未知)"
-    logger.warning(f"{fmt}: 输入 {total} -> 导出 {exported}（跳过 {skipped}），示例: {sample}")
+    sample = ", ".join(skipped[:5]) if skipped else "(未知)"
+    logger.warning(f"{fmt}: 输入 {total} -> 导出 {exported}（跳过 {total - exported}），示例: {sample}")
 
 
 # ============================================================ Mihomo
-def export_mihomo(nodes: List[Dict[str, Any]]) -> str:
-    proxies: List[Dict[str, Any]] = []
-    names: List[str] = []
-    for n in nodes:
-        p = _to_mihomo(n)
-        if p is None:
-            continue
-        proxies.append(p)
-        names.append(p["name"])
-
+def _dump_mihomo(proxies: List[Dict[str, Any]], names: List[str]) -> str:
     doc = {
         "mixed-port": 7890,
         "allow-lan": False,
@@ -239,49 +235,32 @@ def _to_mihomo(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _apply_ws_opts(base: Dict[str, Any], n: Dict[str, Any]) -> None:
-    if base.get("network") == "ws":
-        opts: Dict[str, Any] = {}
-        if n.get("path"):
-            opts["path"] = n["path"]
-        if n.get("host"):
-            opts["headers"] = {"Host": n["host"]}
-        if opts:
-            base["ws-opts"] = opts
+    if base.get("network") != "ws":
+        return
+    opts: Dict[str, Any] = {}
+    if n.get("path"):
+        opts["path"] = n["path"]
+    if n.get("host"):
+        opts["headers"] = {"Host": n["host"]}
+    if opts:
+        base["ws-opts"] = opts
 
 
 # ============================================================ sing-box
-def export_singbox(nodes: List[Dict[str, Any]]) -> str:
-    """导出 sing-box JSON。
-
-    注意：selector 的 outbounds 只包含**实际生成 outbound 成功**的 tag，
-    避免引用不存在的节点（之前会列出所有 name 导致客户端报错）。
-    """
-    proxy_outbounds: List[Dict[str, Any]] = []
-    proxy_tags: List[str] = []
-
-    for n in nodes:
-        ob = _to_singbox(n)
-        if ob is None:
-            continue
-        tag = ob.get("tag")
-        if not tag:
-            continue
-        proxy_outbounds.append(ob)
-        proxy_tags.append(tag)
-
-    outbounds: List[Dict[str, Any]] = [
+def _dump_singbox(outbounds: List[Dict[str, Any]], tags: List[str]) -> str:
+    all_outbounds: List[Dict[str, Any]] = [
         {
             "type": "selector",
             "tag": "Vael-Mux",
-            "outbounds": proxy_tags + ["direct"],
+            "outbounds": tags + ["direct"],
         },
         {"type": "direct", "tag": "direct"},
     ]
-    outbounds.extend(proxy_outbounds)
+    all_outbounds.extend(outbounds)
 
     doc = {
         "log": {"level": "info"},
-        "outbounds": outbounds,
+        "outbounds": all_outbounds,
         "route": {
             "rules": [],
             "final": "Vael-Mux",
@@ -310,7 +289,10 @@ def _to_singbox(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             }
         )
         if n.get("tls"):
-            base["tls"] = {"enabled": True, "server_name": n.get("sni") or n.get("host") or ""}
+            base["tls"] = {
+                "enabled": True,
+                "server_name": n.get("sni") or n.get("host") or "",
+            }
         _apply_singbox_transport(base, n)
         return base
 
@@ -363,43 +345,22 @@ def _to_singbox(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _apply_singbox_transport(base: Dict[str, Any], n: Dict[str, Any]) -> None:
-    net = n.get("network")
-    if net == "ws":
+    if n.get("network") == "ws":
         base["transport"] = {
             "type": "ws",
             "path": n.get("path") or "/",
-            "headers": {"Host": n.get("host")} if n.get("host") else {},
+            "headers": {"Host": n["host"]} if n.get("host") else {},
         }
 
 
-# ============================================================ Base64
-def export_base64(nodes: List[Dict[str, Any]]) -> str:
-    uris = _collect_uris(nodes)
-    joined = "\n".join(uris)
-    return base64.b64encode(joined.encode("utf-8")).decode("ascii")
-
-
-# ============================================================ v2ray 订阅
-def export_v2ray_sub(nodes: List[Dict[str, Any]]) -> str:
-    """v2rayN / v2rayNG / v2rayA 订阅格式。
-
-    内容与通用 base64 一致（base64 编码的原始 URI 列表）。
-    """
-    uris = _collect_uris(nodes)
-    joined = "\n".join(uris)
-    return base64.b64encode(joined.encode("utf-8")).decode("ascii")
-
-
+# ============================================================ URI 收集
 def _collect_uris(nodes: List[Dict[str, Any]]) -> List[str]:
     """收集节点的分享链接。
 
     优先使用 raw（URI 订阅源解析来的原始文本）；
     raw 为空时从节点字段反向生成（适用于 Clash YAML 源 / 手动新增的节点）。
-    字段缺失无法生成的节点会被跳过，并打印 warning。
     """
     result: List[str] = []
-    skipped: List[Dict[str, Any]] = []
-
     for n in nodes:
         raw = n.get("raw")
         if raw:
@@ -408,21 +369,20 @@ def _collect_uris(nodes: List[Dict[str, Any]]) -> List[str]:
         uri = _node_to_uri(n)
         if uri:
             result.append(uri)
-        else:
-            skipped.append(n)
-
-    if skipped:
-        names = [str(x.get("name") or f"{x.get('type')}-{x.get('server')}:{x.get('port')}") for x in skipped[:5]]
-        logger.warning(
-            f"无法生成分享链接 {len(skipped)} 个节点（示例: {', '.join(names)}）；"
-            f"这些节点不会出现在 base64.txt / v2ray.txt。"
-            f"常见原因：uuid / password / cipher 等字段缺失。"
-        )
-
     return result
 
 
-# ---------------------------------------------------------------- URI 反向生成
+def _collect_skipped(nodes: List[Dict[str, Any]]) -> List[str]:
+    """返回无法生成 URI 的节点标签（用于告警日志）。"""
+    skipped: List[str] = []
+    for n in nodes:
+        if n.get("raw"):
+            continue
+        if _node_to_uri(n) is None:
+            skipped.append(_label(n))
+    return skipped
+
+
 def _node_to_uri(n: Dict[str, Any]) -> Optional[str]:
     t = n.get("type")
     if t == "vmess":
@@ -439,15 +399,11 @@ def _node_to_uri(n: Dict[str, Any]) -> Optional[str]:
 
 
 def _vmess_uri(n: Dict[str, Any]) -> Optional[str]:
-    host = n.get("server")
-    port = n.get("port")
-    uuid = n.get("uuid")
+    host, port, uuid = n.get("server"), n.get("port"), n.get("uuid")
     if not host or not port or not uuid:
         return None
 
-    net = n.get("network") or "tcp"
-    tls_val = "tls" if n.get("tls") else ""
-    data: Dict[str, Any] = {
+    data = {
         "v": "2",
         "ps": n.get("name") or f"vmess-{host}",
         "add": host,
@@ -455,11 +411,11 @@ def _vmess_uri(n: Dict[str, Any]) -> Optional[str]:
         "id": uuid,
         "aid": str(int(n.get("alterId", 0) or 0)),
         "scy": n.get("cipher") or "auto",
-        "net": net,
+        "net": n.get("network") or "tcp",
         "type": "none",
         "host": n.get("host") or "",
         "path": n.get("path") or "",
-        "tls": tls_val,
+        "tls": "tls" if n.get("tls") else "",
         "sni": n.get("sni") or "",
     }
     payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -468,15 +424,11 @@ def _vmess_uri(n: Dict[str, Any]) -> Optional[str]:
 
 
 def _vless_uri(n: Dict[str, Any]) -> Optional[str]:
-    host = n.get("server")
-    port = n.get("port")
-    uuid = n.get("uuid")
+    host, port, uuid = n.get("server"), n.get("port"), n.get("uuid")
     if not host or not port or not uuid:
         return None
 
-    qs: Dict[str, str] = {}
-    net = n.get("network") or "tcp"
-    qs["type"] = net
+    qs: Dict[str, str] = {"type": n.get("network") or "tcp"}
     if n.get("tls"):
         qs["security"] = "tls"
     if n.get("sni"):
@@ -491,14 +443,11 @@ def _vless_uri(n: Dict[str, Any]) -> Optional[str]:
         qs["allowInsecure"] = "1"
 
     name = quote(str(n.get("name") or f"vless-{host}"), safe="")
-    query = urlencode(qs)
-    return f"vless://{uuid}@{host}:{int(port)}?{query}#{name}"
+    return f"vless://{uuid}@{host}:{int(port)}?{urlencode(qs)}#{name}"
 
 
 def _trojan_uri(n: Dict[str, Any]) -> Optional[str]:
-    host = n.get("server")
-    port = n.get("port")
-    pw = n.get("password")
+    host, port, pw = n.get("server"), n.get("port"), n.get("password")
     if not host or not port or not pw:
         return None
 
@@ -522,23 +471,18 @@ def _trojan_uri(n: Dict[str, Any]) -> Optional[str]:
 
 
 def _ss_uri(n: Dict[str, Any]) -> Optional[str]:
-    host = n.get("server")
-    port = n.get("port")
-    method = n.get("cipher")
-    pw = n.get("password")
+    host, port = n.get("server"), n.get("port")
+    method, pw = n.get("cipher"), n.get("password")
     if not host or not port or not method or pw is None:
         return None
 
-    # SIP002: ss://base64(method:password)@host:port#name
     userinfo = base64.urlsafe_b64encode(f"{method}:{pw}".encode("utf-8")).decode("ascii").rstrip("=")
     name = quote(str(n.get("name") or f"ss-{host}"), safe="")
     return f"ss://{userinfo}@{host}:{int(port)}#{name}"
 
 
 def _hysteria2_uri(n: Dict[str, Any]) -> Optional[str]:
-    host = n.get("server")
-    port = n.get("port")
-    pw = n.get("password")
+    host, port, pw = n.get("server"), n.get("port"), n.get("password")
     if not host or not port or not pw:
         return None
 
@@ -555,20 +499,8 @@ def _hysteria2_uri(n: Dict[str, Any]) -> Optional[str]:
 
 
 # ============================================================ v2ray config.json
-def export_v2ray_json(nodes: List[Dict[str, Any]]) -> str:
-    """v2ray 完整配置 (config.json)。
-
-    不支持 hysteria2（v2ray 核心不包含该协议），传入的节点应事先过滤。
-    """
-    proxy_outbounds: List[Dict[str, Any]] = []
-    for n in nodes:
-        ob = _to_v2ray_outbound(n)
-        if ob is not None:
-            proxy_outbounds.append(ob)
-
-    outbounds: List[Dict[str, Any]] = []
-    if proxy_outbounds:
-        outbounds.extend(proxy_outbounds)
+def _dump_v2ray_json(proxy_outbounds: List[Dict[str, Any]]) -> str:
+    outbounds: List[Dict[str, Any]] = list(proxy_outbounds)
     outbounds.append({"protocol": "freedom", "tag": "direct"})
     outbounds.append({"protocol": "blackhole", "tag": "block"})
 
@@ -635,10 +567,7 @@ def _to_v2ray_outbound(n: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
 
     if t == "vless":
-        user: Dict[str, Any] = {
-            "id": n.get("uuid", ""),
-            "encryption": "none",
-        }
+        user: Dict[str, Any] = {"id": n.get("uuid", ""), "encryption": "none"}
         if n.get("flow"):
             user["flow"] = n["flow"]
         return {
@@ -702,7 +631,7 @@ def _v2ray_stream_settings(n: Dict[str, Any], force_tls: bool = False) -> Dict[s
         if n.get("path"):
             grpc["serviceName"] = n["path"].lstrip("/")
         s["grpcSettings"] = grpc
-    elif net == "http" or net == "h2":
+    elif net in ("http", "h2"):
         http_settings: Dict[str, Any] = {}
         if n.get("host"):
             http_settings["host"] = [n["host"]]

@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from app.config import load_base_config
-from app.utils.state import state
+from app.utils.runtime import state
 
 FORMAT_MAP = {
     "mihomo": ("mihomo.yaml", "text/yaml; charset=utf-8"),
@@ -23,6 +23,9 @@ FORMAT_MAP = {
     "v2ray-config": ("v2ray.json", "application/json; charset=utf-8"),
 }
 
+# 需要声明订阅刷新周期的文件名
+_PROFILE_INTERVAL_FILES = frozenset({"mihomo.yaml", "v2ray.txt", "base64.txt"})
+
 
 def create_api_app() -> FastAPI:
     app = FastAPI(title="Vael-Mux API", version="1.1.0")
@@ -38,7 +41,7 @@ def create_api_app() -> FastAPI:
     @app.get("/api/formats")
     async def formats():
         return {
-            "formats": sorted(set(FORMAT_MAP.keys())),
+            "formats": sorted(FORMAT_MAP.keys()),
             "canonical": ["mihomo", "singbox", "base64", "v2ray", "v2ray-json"],
         }
 
@@ -60,7 +63,7 @@ def create_api_app() -> FastAPI:
             )
 
         headers = {"Cache-Control": "no-store"}
-        if filename in ("mihomo.yaml", "v2ray.txt", "base64.txt"):
+        if filename in _PROFILE_INTERVAL_FILES:
             headers["Profile-Update-Interval"] = "12"
 
         return FileResponse(

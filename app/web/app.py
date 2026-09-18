@@ -1,12 +1,11 @@
 """Web 管理界面 (默认 8100)。"""
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -23,9 +22,14 @@ from app.core.startup import (
     trigger_now,
 )
 from app.models import NodeRecord
-from app.utils.logger import logger, set_log_broadcast
-from app.utils.state import TaskStage, state
-from app.web.ws import ws_router
+from app.utils.runtime import (
+    LOG_BACKFILL,
+    TaskStage,
+    get_recent_logs,
+    logger,
+    set_log_broadcast,
+    state,
+)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -50,6 +54,7 @@ PATCHABLE_FIELDS = {
     "enabled",
 }
 
+# 修改这些字段会触发自动重测
 RETEST_FIELDS = {
     "type",
     "server",
@@ -68,7 +73,13 @@ RETEST_FIELDS = {
     "skip_cert_verify",
 }
 
-CREATABLE_TYPES = {"vmess", "vless", "trojan", "ss", "hysteria2"}
+CREATABLE_TYPES = frozenset({"vmess", "vless", "trojan", "ss", "hysteria2"})
+
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -77,9 +88,7 @@ class NoCacheStaticFiles(StaticFiles):
     async def get_response(self, path, scope):
         response = await super().get_response(path, scope)
         if response.status_code == 200:
-            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
+            response.headers.update(_NO_CACHE_HEADERS)
         return response
 
 
@@ -113,7 +122,7 @@ async def lifespan(app: FastAPI):
         pass
 
 
-def _sort_records(records: List[NodeRecord]) -> List[NodeRecord]:
+def _sort_records(records: List[NodeRecord]) -> None:
     records.sort(
         key=lambda r: (
             r.latency_ms is None,
@@ -121,16 +130,14 @@ def _sort_records(records: List[NodeRecord]) -> List[NodeRecord]:
             -(r.speed_cps or 0),
         )
     )
-    return records
 
 
 def _asset_version() -> str:
     """用文件 mtime 作为资源版本号，确保 app.js / style.css 更新后自动失效缓存。"""
     parts = []
     for name in ("app.js", "style.css"):
-        p = STATIC_DIR / name
         try:
-            parts.append(str(int(p.stat().st_mtime)))
+            parts.append(str(int((STATIC_DIR / name).stat().st_mtime)))
         except Exception:
             parts.append("0")
     return "-".join(parts)
@@ -138,7 +145,6 @@ def _asset_version() -> str:
 
 def create_web_app() -> FastAPI:
     app = FastAPI(title="Vael-Mux", version=__version__, lifespan=lifespan)
-    app.include_router(ws_router)
 
     if STATIC_DIR.exists():
         app.mount(
@@ -147,23 +153,42 @@ def create_web_app() -> FastAPI:
             name="static",
         )
 
+    # ----------------------------------------------------- WebSocket 实时状态
+    @app.websocket("/ws/status")
+    async def ws_status(websocket: WebSocket) -> None:
+        await websocket.accept()
+        state.subscribers.append(websocket)
+        try:
+            # 1) 当前状态
+            await websocket.send_json({"event": "state", **state.snapshot()})
+            # 2) 回填最近日志
+            for entry in get_recent_logs(LOG_BACKFILL):
+                try:
+                    await websocket.send_json({"event": "log", **entry})
+                except Exception:
+                    break
+            # 3) 保持连接（仅服务端推送）
+            while True:
+                await websocket.receive_text()
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            try:
+                state.subscribers.remove(websocket)
+            except ValueError:
+                pass
+
     # ----------------------------------------------------- 页面
     @app.get("/")
     async def index():
         """动态注入资源版本号，避免浏览器缓存旧版 app.js / style.css。"""
-        html_path = STATIC_DIR / "index.html"
-        html = html_path.read_text(encoding="utf-8")
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
         v = _asset_version()
         html = html.replace('href="/static/style.css"', f'href="/static/style.css?v={v}"')
         html = html.replace('src="/static/app.js"', f'src="/static/app.js?v={v}"')
-        return HTMLResponse(
-            html,
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
-        )
+        return HTMLResponse(html, headers=_NO_CACHE_HEADERS)
 
     @app.get("/health")
     async def health():
@@ -191,9 +216,7 @@ def create_web_app() -> FastAPI:
 
         cfg = load_base_config()
         include_history = bool((cfg.get("check") or {}).get("include_history", False))
-        msg = "已触发检测任务"
-        if include_history:
-            msg += "（含历史节点）"
+        msg = "已触发检测任务" + ("（含历史节点）" if include_history else "")
         return {"ok": True, "message": msg}
 
     @app.post("/api/stop")
@@ -254,10 +277,8 @@ def create_web_app() -> FastAPI:
                 continue
             if f == "disabled" and r.enabled:
                 continue
-            if q:
-                hay = f"{r.name} {r.server} {r.type}".lower()
-                if q not in hay:
-                    continue
+            if q and q not in f"{r.name} {r.server} {r.type}".lower():
+                continue
             items.append(r)
 
         _sort_records(items)
@@ -268,11 +289,10 @@ def create_web_app() -> FastAPI:
         page = min(max(1, page), pages)
         start = (page - 1) * page_size
         end = start + page_size
-        page_items = items[start:end]
 
         return JSONResponse(
             {
-                "nodes": [r.to_dict() for r in page_items],
+                "nodes": [r.to_dict() for r in items[start:end]],
                 "total": total,
                 "page": page,
                 "page_size": page_size,
@@ -280,11 +300,7 @@ def create_web_app() -> FastAPI:
                 "latency_targets": latency_targets,
                 "speed_targets": speed_targets,
             },
-            headers={
-                "Cache-Control": "no-cache, no-store, must-revalidate",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
+            headers=_NO_CACHE_HEADERS,
         )
 
     @app.get("/api/nodes/{node_id}")
@@ -336,12 +352,8 @@ def create_web_app() -> FastAPI:
         rec.ensure_id()
         rec.touch()
 
-        existing = await store.get(rec.id)
-        if existing is not None:
-            raise HTTPException(
-                409,
-                "节点已存在（类型 / 服务器 / 端口 / 凭证 完全一致）",
-            )
+        if await store.get(rec.id) is not None:
+            raise HTTPException(409, "节点已存在（类型 / 服务器 / 端口 / 凭证 完全一致）")
 
         await store.bulk_upsert([rec], preserve_user_state=False)
         await store.save()
@@ -358,8 +370,7 @@ def create_web_app() -> FastAPI:
     @app.patch("/api/nodes/{node_id}")
     async def patch_node(node_id: str, patch: Dict[str, Any] = Body(...)):
         store = get_store()
-        rec = await store.get(node_id)
-        if rec is None:
+        if await store.get(node_id) is None:
             raise HTTPException(404, "节点不存在")
 
         filtered = {k: v for k, v in patch.items() if k in PATCHABLE_FIELDS}
@@ -402,8 +413,7 @@ def create_web_app() -> FastAPI:
     @app.delete("/api/nodes/{node_id}")
     async def delete_node(node_id: str):
         store = get_store()
-        ok = await store.delete(node_id)
-        if not ok:
+        if not await store.delete(node_id):
             raise HTTPException(404, "节点不存在")
         await store.save()
         await regenerate_subscriptions()
@@ -413,8 +423,7 @@ def create_web_app() -> FastAPI:
     @app.post("/api/nodes/{node_id}/enable")
     async def enable_node(node_id: str):
         store = get_store()
-        rec = await store.get(node_id)
-        if rec is None:
+        if await store.get(node_id) is None:
             raise HTTPException(404, "节点不存在")
         await store.set_enabled([node_id], True)
         await store.save()
@@ -425,8 +434,7 @@ def create_web_app() -> FastAPI:
     @app.post("/api/nodes/{node_id}/disable")
     async def disable_node(node_id: str):
         store = get_store()
-        rec = await store.get(node_id)
-        if rec is None:
+        if await store.get(node_id) is None:
             raise HTTPException(404, "节点不存在")
         await store.set_enabled([node_id], False)
         await store.save()
