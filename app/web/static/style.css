@@ -906,6 +906,16 @@ h1 {
     line-height: 1.5;
 }
 
+.form-hint code {
+    font-family: "SF Mono", "Consolas", "Menlo", monospace;
+    font-size: 11px;
+    background: #131720;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0 4px;
+    color: #b28bff;
+}
+
 .checkbox-row {
     display: flex;
     flex-wrap: wrap;
@@ -1024,15 +1034,27 @@ footer {
     opacity: 0.85;
 }
 
-.footer-meta a {
+/* 项目名称超链接（GitHub 图标 + 名称） */
+.footer-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     color: var(--accent);
     text-decoration: none;
     transition: color 0.15s;
+    vertical-align: middle;
 }
 
-.footer-meta a:hover {
+.footer-link:hover {
     color: #6db3ff;
     text-decoration: underline;
+}
+
+.footer-link .github-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    display: block;
 }
 
 .footer-sep {

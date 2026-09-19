@@ -35,9 +35,9 @@
     const LOG_MAX_LINES = 500;
     const LOG_AUTOSCROLL_THRESHOLD = 40;
 
-    // 底部版权链接（按需修改）
+    // 页脚：项目主页 + 版权起始年份
     const FOOTER_HOMEPAGE = "https://github.com/1983shake/Vael-Mux";
-    const FOOTER_LINK_TEXT = "项目主页";
+    const COPYRIGHT_START_YEAR = 2026;
 
     const $ = (id) => document.getElementById(id);
 
@@ -90,18 +90,25 @@
     }
 
     // ============================================================
-    // 底部版权 / 链接 / 版本
+    // 页脚：版权年份 / 项目链接 / 版本
     // ============================================================
     async function initFooter() {
+        // 版权年份：2026-当前年份（即使同年也完整显示，如 2026-2026）
         const yearEl = $("footer-year");
-        if (yearEl) yearEl.textContent = String(new Date().getFullYear());
-
-        const linkEl = $("footer-link");
-        if (linkEl) {
-            linkEl.href = FOOTER_HOMEPAGE;
-            linkEl.textContent = FOOTER_LINK_TEXT;
+        if (yearEl) {
+            const currentYear = new Date().getFullYear();
+            // 兜底：若系统时间早于起始年份，则显示"当前-当前"，避免出现倒序
+            const startYear = Math.min(COPYRIGHT_START_YEAR, currentYear);
+            yearEl.textContent = `${startYear}-${currentYear}`;
         }
 
+        // 项目主页链接（GitHub 图标 + 名称已内联在 HTML 中）
+        const linkEl = $("footer-link");
+        if (linkEl && !linkEl.getAttribute("href")) {
+            linkEl.href = FOOTER_HOMEPAGE;
+        }
+
+        // 版本号
         const verEl = $("footer-version");
         if (!verEl) return;
         try {
@@ -947,6 +954,16 @@
         if (!payload.check.samples || payload.check.samples < 1) {
             alert("延迟采样次数必须 >= 1");
             return;
+        }
+
+        // cron：5 段快速校验（后端还会用 APScheduler 再校验一次）
+        const sched = payload.check.schedule;
+        if (sched) {
+            const parts = sched.trim().split(/\s+/);
+            if (parts.length !== 5) {
+                alert(`cron 表达式必须为 5 段（分 时 日 月 周），当前 ${parts.length} 段。`);
+                return;
+            }
         }
 
         const btn = $("btn-save-config");
