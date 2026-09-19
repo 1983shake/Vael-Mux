@@ -2,8 +2,8 @@
 
 services:
   vael-mux:
-    build: .
-    #image: vael-mux:latest
+    #build: .
+    image: docker.cnb.cool/1983shake/vael-mux:latest
     container_name: vael-mux
     restart: unless-stopped
     ports:
