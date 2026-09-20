@@ -1,23 +1,26 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
     TZ=Asia/Shanghai
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates tzdata \
+# 系统依赖：curl 用于 healthcheck
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# Python 依赖（独立一层，便于缓存）
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-# RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
 
-COPY app/ ./app/
-COPY config/ ./config/
+# 应用代码
+COPY app ./app
 
-RUN mkdir -p /app/output
+# 运行时目录（挂载点，无需 COPY config）
+RUN mkdir -p /app/config /app/output
 
 EXPOSE 8100 8110
 
