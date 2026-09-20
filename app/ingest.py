@@ -1,25 +1,116 @@
-"""订阅内容解析：支持 Clash YAML、Base64 编码、明文 URI 列表。"""
+"""订阅源拉取 + 内容解析 + 去重统计。
 
+本模块由原 app/core/fetcher.py 与 app/core/parser.py 合并而来：
+  - 拉取：HTTP GET 订阅源，并发控制
+  - 解析：Clash YAML / Base64 / URI 列表
+  - 去重：按 (type, server, port, uuid|password) 去重并返回统计
+"""
+
+import asyncio
 import base64
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlparse
 
+import httpx
 import yaml
 
-logger = logging.getLogger("vael-mux.parser")
+logger = logging.getLogger("vael-mux.ingest")
+
+ProgressCallback = Callable[[int, int], Awaitable[None]]
 
 
-# ---------------------------------------------------------------- 主入口
-def parse_all(raw_texts: List[str]) -> List[Dict[str, Any]]:
-    nodes: List[Dict[str, Any]] = []
-    for text in raw_texts:
+# ============================================================ 拉取
+async def fetch_one(client: httpx.AsyncClient, url: str) -> Optional[str]:
+    try:
+        resp = await client.get(url, timeout=30.0, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.text
+    except Exception as e:
+        logger.warning(f"订阅源拉取失败 [{url}]: {e}")
+        return None
+
+
+async def fetch_all(
+    urls: List[str],
+    progress_callback: Optional[ProgressCallback] = None,
+    max_concurrency: int = 10,
+) -> List[str]:
+    results: List[str] = []
+    total = len(urls)
+    if total == 0:
+        return results
+
+    sem = asyncio.Semaphore(max_concurrency)
+    lock = asyncio.Lock()
+    completed = 0
+
+    async with httpx.AsyncClient(
+        headers={"User-Agent": "Vael-Mux/1.1"},
+        timeout=30.0,
+        follow_redirects=True,
+    ) as client:
+
+        async def worker(url: str) -> None:
+            nonlocal completed
+            async with sem:
+                text = await fetch_one(client, url)
+            async with lock:
+                completed += 1
+                if text:
+                    results.append(text)
+                if progress_callback:
+                    await progress_callback(completed, total)
+
+        await asyncio.gather(*(worker(u) for u in urls))
+
+    return results
+
+
+# ============================================================ 解析
+def parse_all_with_stats(
+    raw_texts: List[str],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """解析所有订阅源并去重，同时返回统计信息。
+
+    统计字段：sources / per_source / parsed / deduped / removed
+    """
+    all_nodes: List[Dict[str, Any]] = []
+    per_source: List[int] = []
+
+    for idx, text in enumerate(raw_texts):
         try:
-            nodes.extend(parse_subscription_text(text))
+            nodes = parse_subscription_text(text)
+            per_source.append(len(nodes))
+            all_nodes.extend(nodes)
         except Exception as e:
-            logger.warning(f"解析订阅内容失败: {e}")
-    return dedupe(nodes)
+            logger.warning(f"解析订阅内容失败（第 {idx + 1} 个源）: {e}")
+            per_source.append(0)
+
+    parsed_count = len(all_nodes)
+    deduped = dedupe(all_nodes)
+
+    stats: Dict[str, Any] = {
+        "sources": len(raw_texts),
+        "per_source": per_source,
+        "parsed": parsed_count,
+        "deduped": len(deduped),
+        "removed": parsed_count - len(deduped),
+    }
+
+    if stats["removed"] > 0:
+        logger.info(f"节点去重：{len(raw_texts)} 个订阅源共解析 {parsed_count} 个节点，" f"移除 {stats['removed']} 个重复，保留 {len(deduped)} 个")
+    else:
+        logger.info(f"解析完成：{len(deduped)} 个节点（无重复）")
+
+    return deduped, stats
+
+
+def parse_all(raw_texts: List[str]) -> List[Dict[str, Any]]:
+    """解析所有订阅源并去重（兼容旧接口）。"""
+    nodes, _ = parse_all_with_stats(raw_texts)
+    return nodes
 
 
 def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
@@ -27,7 +118,6 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
     if not text:
         return []
 
-    # 1) 尝试 Clash YAML
     if _looks_like_yaml(text):
         try:
             data = yaml.safe_load(text)
@@ -36,16 +126,13 @@ def parse_subscription_text(text: str) -> List[Dict[str, Any]]:
         except yaml.YAMLError:
             pass
 
-    # 2) 尝试 Base64
     decoded = _try_b64_decode(text)
     if decoded is not None and _looks_like_uri_list(decoded):
         return _parse_uri_lines(decoded)
 
-    # 3) 直接作为 URI 列表解析
     if _looks_like_uri_list(text):
         return _parse_uri_lines(text)
 
-    # 4) 兜底：Base64 解出来再当 YAML 试一次
     if decoded is not None and _looks_like_yaml(decoded):
         try:
             data = yaml.safe_load(decoded)
@@ -215,7 +302,6 @@ def _parse_ss(uri: str) -> Optional[Dict[str, Any]]:
             "password": password,
             "raw": uri,
         }
-    # ss://base64(method:pass@host:port)#name
     payload = uri[len("ss://") :]
     if "#" in payload:
         payload = payload.split("#", 1)[0]
@@ -276,8 +362,9 @@ def _normalize_clash_proxy(proxy: Dict[str, Any]) -> Dict[str, Any]:
     return p
 
 
-# ---------------------------------------------------------------- 去重
+# ============================================================ 去重
 def dedupe(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按 (type, server, port, uuid|password) 去重，保留首次出现的节点。"""
     seen = set()
     result = []
     for n in nodes:

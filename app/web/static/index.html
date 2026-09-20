@@ -355,7 +355,7 @@
             <div class="modal-header">
                 <div>
                     <h3>配置</h3>
-                    <div class="modal-subtitle">保存后自动重新加载生效；端口修改需重启容器</div>
+                    <div class="modal-subtitle">保存后自动重新加载生效</div>
                 </div>
                 <button id="btn-close-config" class="icon-btn" type="button" aria-label="关闭">×</button>
             </div>
@@ -364,20 +364,15 @@
                 <div class="form-section">
                     <div class="form-section-title">服务器</div>
                     <div class="form-grid">
-                        <div class="form-field">
+                        <div class="form-field full">
                             <label>监听地址</label>
                             <input id="cfg-server-host" class="input mono" type="text" spellcheck="false">
                         </div>
-                        <div class="form-field">
-                            <label>Web 端口</label>
-                            <input id="cfg-server-web-port" class="input mono" type="number" min="1" max="65535">
-                        </div>
-                        <div class="form-field">
-                            <label>API 端口</label>
-                            <input id="cfg-server-api-port" class="input mono" type="number" min="1" max="65535">
-                        </div>
                     </div>
-                    <div class="form-hint">端口修改需重启容器后生效。</div>
+                    <div class="form-hint">
+                        端口说明：内部固定 <code>8100</code>(Web) / <code>8110</code>(API)，
+                        对外端口由 <code>docker-compose.yml</code> 的 <code>ports</code> 映射控制。
+                    </div>
                 </div>
 
                 <div class="form-section">
@@ -420,6 +415,20 @@
                             <label>有效节点上限（0=不限）</label>
                             <input id="cfg-check-max-valid" class="input mono" type="number" min="0">
                         </div>
+                        <div class="form-field">
+                            <label>有效延迟判定</label>
+                            <select id="cfg-check-latency-mode" class="input">
+                                <option value="all">全部启用目标通过</option>
+                                <option value="any">任一启用目标通过</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>有效速度判定</label>
+                            <select id="cfg-check-speed-mode" class="input">
+                                <option value="all">全部启用目标通过</option>
+                                <option value="any">任一启用目标通过</option>
+                            </select>
+                        </div>
                         <div class="form-field full">
                             <label>定时任务 cron 表达式</label>
                             <input id="cfg-check-schedule" class="input mono" type="text" placeholder="0 9,21 * * *"
@@ -429,6 +438,11 @@
                                 注意：星期字段 <code>0=周一</code>，周日请写 <code>sun</code>。
                             </div>
                         </div>
+                    </div>
+                    <div class="form-hint">
+                        有效延迟：节点自身握手成功为硬前提，再按所选模式判定各启用延迟目标；
+                        有效速度：按所选模式判定各启用速度目标。
+                        无启用目标时两种模式均视为通过。
                     </div>
                     <div class="checkbox-row">
                         <label class="checkbox-item">

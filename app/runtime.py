@@ -1,9 +1,7 @@
 """运行时模块：全局状态 + 日志（标准输出 / 环形缓冲 / WebSocket 广播）。
 
-本模块合并了原来的 logger.py 与 state.py：
-  - 日志广播与状态广播共享同一批 WebSocket 订阅者，合并后逻辑内聚；
-  - AppState 使用 __slots__，避免每个实例携带 __dict__；
-  - 日志环形缓冲仅保留 (level, line) 两个字段，且上限下调至 300 条。
+本模块由原 app/utils/runtime.py 平移而来，仅将内部 import 从
+app.config 改为 app.models。
 """
 
 import asyncio
@@ -84,7 +82,6 @@ class AppState:
         self.subscribers: List[Any] = []
 
     def reset_run(self, total_subscriptions: int, max_valid: int) -> None:
-        """重置一次流水线运行所需字段。"""
         self.running = True
         self.stop_requested = False
         self.phase = ""
@@ -152,13 +149,12 @@ class AppState:
         await self._send_all({"event": "log", **entry})
 
 
-# 模块级单例
 state = AppState()
 
 
 # ============================================================ 日志
 LOG_BUFFER: deque = deque(maxlen=300)
-LOG_BACKFILL = 200  # WebSocket 连接建立时回填的历史日志条数
+LOG_BACKFILL = 200
 
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _broadcast_cb: Optional[Callable[[Dict[str, Any]], Any]] = None
@@ -170,7 +166,7 @@ def _resolve_level() -> str:
     if env in _VALID_LEVELS:
         return env
     try:
-        from app.config import load_base_config
+        from app.models import load_base_config
 
         cfg = load_base_config()
         raw = (cfg.get("logging") or {}).get("level", "INFO")
@@ -183,7 +179,6 @@ def _resolve_level() -> str:
 
 
 def apply_log_level(level: Optional[str] = None) -> str:
-    """运行时应用日志级别。传入 None 时重新从配置/环境变量解析。"""
     new_level = (level or _resolve_level()).strip().upper()
     if new_level not in _VALID_LEVELS:
         new_level = "INFO"
@@ -195,14 +190,12 @@ def set_log_broadcast(
     loop: asyncio.AbstractEventLoop,
     callback: Callable[[Dict[str, Any]], Any],
 ) -> None:
-    """注入广播回调（由 Web 层在启动时调用）。"""
     global _loop, _broadcast_cb
     _loop = loop
     _broadcast_cb = callback
 
 
 def get_recent_logs(limit: int = LOG_BACKFILL) -> List[Dict[str, Any]]:
-    """获取最近日志（按时间升序）。limit <= 0 表示返回全部。"""
     if limit <= 0:
         return list(LOG_BUFFER)
     return list(LOG_BUFFER)[-limit:]
@@ -211,7 +204,7 @@ def get_recent_logs(limit: int = LOG_BACKFILL) -> List[Dict[str, Any]]:
 class _RingBufferHandler(logging.Handler):
     """把日志记录写入内存缓冲，并通过注入的回调广播。
 
-    为避免常驻内存膨胀，只保留 level 与渲染后的单行文本两个字段。
+    只保留 level 与渲染后的单行文本两个字段，避免常驻内存膨胀。
     """
 
     def emit(self, record: logging.LogRecord) -> None:
@@ -234,7 +227,6 @@ class _RingBufferHandler(logging.Handler):
                 except Exception:
                     pass
         except Exception:
-            # 日志系统自身出错不影响主流程
             pass
 
 

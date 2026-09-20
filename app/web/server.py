@@ -1,4 +1,14 @@
-"""Web 管理界面 (默认 8100)。"""
+"""Web 管理界面 (8100) + API / 订阅输出服务 (8110)。
+
+本模块由原 app/web/app.py 与 app/web/api.py 合并而来：
+  - create_web_app()：Web 管理界面（含 WebSocket 实时状态、配置面板）
+  - create_api_app()：订阅输出（/sub/{fmt}）
+
+端口说明：
+  - 内部端口固定 8100 / 8110，由 app.main 传入 uvicorn
+  - 对外端口由 docker-compose.yml 的 ports 映射控制
+  - 配置文件中的 server.web_port / server.api_port 会被忽略
+"""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -11,20 +21,25 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
-from app.config import enabled_targets, load_base_config, save_config
-from app.core.checker import is_fully_valid
-from app.core.startup import (
+from app.checker import is_fully_valid
+from app.models import (
+    NodeRecord,
+    enabled_targets,
+    load_base_config,
+    normalize_mode,
+    save_config,
+)
+from app.pipeline import (
     get_store,
     regenerate_subscriptions,
     reload_scheduler,
     retest_single,
-    run_pipeline,
+    spawn_pipeline,
     start_scheduler,
     stop_pipeline,
     trigger_now,
 )
-from app.models import NodeRecord
-from app.utils.runtime import (
+from app.runtime import (
     LOG_BACKFILL,
     TaskStage,
     apply_log_level,
@@ -85,7 +100,26 @@ _NO_CACHE_HEADERS = {
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
+# API 订阅格式映射
+FORMAT_MAP = {
+    "mihomo": ("mihomo.yaml", "text/yaml; charset=utf-8"),
+    "clash": ("mihomo.yaml", "text/yaml; charset=utf-8"),
+    "singbox": ("singbox.json", "application/json; charset=utf-8"),
+    "sing-box": ("singbox.json", "application/json; charset=utf-8"),
+    "base64": ("base64.txt", "text/plain; charset=utf-8"),
+    "v2ray": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2rayn": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2rayng": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2raya": ("v2ray.txt", "text/plain; charset=utf-8"),
+    "v2ray-json": ("v2ray.json", "application/json; charset=utf-8"),
+    "v2ray_json": ("v2ray.json", "application/json; charset=utf-8"),
+    "v2ray-config": ("v2ray.json", "application/json; charset=utf-8"),
+}
 
+_PROFILE_INTERVAL_FILES = frozenset({"mihomo.yaml", "v2ray.txt", "base64.txt"})
+
+
+# ============================================================ 共享工具
 class NoCacheStaticFiles(StaticFiles):
     """静态文件禁用浏览器缓存。"""
 
@@ -96,9 +130,21 @@ class NoCacheStaticFiles(StaticFiles):
         return response
 
 
+def _asset_version() -> str:
+    """用文件 mtime 作为资源版本号。"""
+    parts = []
+    for name in ("app.js", "style.css"):
+        try:
+            parts.append(str(int((STATIC_DIR / name).stat().st_mtime)))
+        except Exception:
+            parts.append("0")
+    return "-".join(parts)
+
+
+# ============================================================ Web 服务 (8100)
 async def _background_bootstrap() -> None:
     try:
-        await run_pipeline()
+        await spawn_pipeline()
     except Exception:
         logger.exception("首次流水线执行失败")
     try:
@@ -108,7 +154,7 @@ async def _background_bootstrap() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def _web_lifespan(app: FastAPI):
     loop = asyncio.get_running_loop()
     set_log_broadcast(loop, state.broadcast_log)
 
@@ -136,31 +182,13 @@ def _sort_records(records: List[NodeRecord]) -> None:
     )
 
 
-def _asset_version() -> str:
-    """用文件 mtime 作为资源版本号。"""
-    parts = []
-    for name in ("app.js", "style.css"):
-        try:
-            parts.append(str(int((STATIC_DIR / name).stat().st_mtime)))
-        except Exception:
-            parts.append("0")
-    return "-".join(parts)
-
-
 def _validate_config(payload: Dict[str, Any]) -> None:
-    """对即将写回的配置做基本校验，非法时抛 HTTPException(400)。"""
-    server = payload.get("server") or {}
+    """校验即将写回的配置。
+
+    注意：不再校验 server.web_port / server.api_port，因为端口不再由配置管理。
+    """
     check = payload.get("check") or {}
     output = payload.get("output") or {}
-
-    # ---- server ----
-    for key, label in (("web_port", "Web 端口"), ("api_port", "API 端口")):
-        try:
-            v = int(server.get(key) or 0)
-        except (TypeError, ValueError):
-            raise HTTPException(400, f"{label}必须为整数")
-        if not (1 <= v <= 65535):
-            raise HTTPException(400, f"{label}必须在 1-65535 之间")
 
     # ---- logging ----
     level = str((payload.get("logging") or {}).get("level") or "INFO").upper()
@@ -189,6 +217,13 @@ def _validate_config(payload: Dict[str, Any]) -> None:
         raise HTTPException(400, "有效节点上限必须为整数")
     if max_valid < 0:
         raise HTTPException(400, "有效节点上限不能为负数")
+
+    for key, label in (("latency_mode", "有效延迟判定"), ("speed_mode", "有效速度判定")):
+        raw = check.get(key)
+        if raw is None:
+            continue
+        if str(raw).strip().lower() not in ("all", "any"):
+            raise HTTPException(400, f"{label}必须为 all 或 any")
 
     for key, label in (("latency_targets", "延迟目标"), ("speed_targets", "速度目标")):
         targets = check.get(key)
@@ -220,7 +255,7 @@ def _validate_config(payload: Dict[str, Any]) -> None:
 
 
 def create_web_app() -> FastAPI:
-    app = FastAPI(title="Vael-Mux", version=__version__, lifespan=lifespan)
+    app = FastAPI(title="Vael-Mux", version=__version__, lifespan=_web_lifespan)
 
     if STATIC_DIR.exists():
         app.mount(
@@ -288,6 +323,12 @@ def create_web_app() -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(400, "配置必须为对象")
 
+        # 端口不再由配置管理：剥离 server 下的旧端口字段，避免写回
+        server = payload.get("server")
+        if isinstance(server, dict):
+            server.pop("web_port", None)
+            server.pop("api_port", None)
+
         _validate_config(payload)
 
         try:
@@ -309,7 +350,7 @@ def create_web_app() -> FastAPI:
         return {
             "ok": True,
             "path": path,
-            "message": (f"配置已保存（日志级别 {applied_level}）。" "端口修改需重启容器后生效。"),
+            "message": f"配置已保存（日志级别 {applied_level}）。",
         }
 
     # ----------------------------------------------------- 检测控制
@@ -354,6 +395,8 @@ def create_web_app() -> FastAPI:
             "speed_targets": speed_targets,
             "latency_targets_enabled": enabled_targets(latency_targets),
             "speed_targets_enabled": enabled_targets(speed_targets),
+            "latency_mode": normalize_mode(check_cfg.get("latency_mode"), "all"),
+            "speed_mode": normalize_mode(check_cfg.get("speed_mode"), "all"),
             "include_history": bool(check_cfg.get("include_history", False)),
             "max_valid_nodes": state.max_valid_nodes,
         }
@@ -370,6 +413,8 @@ def create_web_app() -> FastAPI:
         check_cfg = config.get("check", {})
         latency_targets = check_cfg.get("latency_targets", []) or []
         speed_targets = check_cfg.get("speed_targets", []) or []
+        latency_mode = normalize_mode(check_cfg.get("latency_mode"), "all")
+        speed_mode = normalize_mode(check_cfg.get("speed_mode"), "all")
 
         store = get_store()
         records = await store.all()
@@ -379,7 +424,7 @@ def create_web_app() -> FastAPI:
 
         items: List[NodeRecord] = []
         for r in records:
-            if not is_fully_valid(r, latency_targets, speed_targets):
+            if not is_fully_valid(r, latency_targets, speed_targets, latency_mode, speed_mode):
                 continue
             if f == "enabled" and not r.enabled:
                 continue
@@ -407,6 +452,8 @@ def create_web_app() -> FastAPI:
                 "pages": pages,
                 "latency_targets": latency_targets,
                 "speed_targets": speed_targets,
+                "latency_mode": latency_mode,
+                "speed_mode": speed_mode,
             },
             headers=_NO_CACHE_HEADERS,
         )
@@ -583,5 +630,55 @@ def create_web_app() -> FastAPI:
         await regenerate_subscriptions()
         await state.broadcast_event("nodes_updated")
         return {"ok": True, "count": len(ids), "action": action}
+
+    return app
+
+
+# ============================================================ API / 订阅服务 (8110)
+def create_api_app() -> FastAPI:
+    app = FastAPI(title="Vael-Mux API", version=__version__)
+
+    @app.get("/health")
+    async def health():
+        return {"status": "ok"}
+
+    @app.get("/api/status")
+    async def status():
+        return state.snapshot()
+
+    @app.get("/api/formats")
+    async def formats():
+        return {
+            "formats": sorted(FORMAT_MAP.keys()),
+            "canonical": ["mihomo", "singbox", "base64", "v2ray", "v2ray-json"],
+        }
+
+    @app.get("/sub/{fmt}")
+    async def get_sub(fmt: str):
+        key = fmt.lower()
+        if key not in FORMAT_MAP:
+            raise HTTPException(status_code=404, detail=f"未知订阅格式: {fmt}")
+
+        filename, media_type = FORMAT_MAP[key]
+        config = load_base_config()
+        out_dir = Path(config["output"].get("directory", "./output"))
+        path = out_dir / filename
+
+        if not path.exists():
+            raise HTTPException(
+                status_code=503,
+                detail="订阅文件尚未生成，请等待首次检测完成",
+            )
+
+        headers = {"Cache-Control": "no-store"}
+        if filename in _PROFILE_INTERVAL_FILES:
+            headers["Profile-Update-Interval"] = "12"
+
+        return FileResponse(
+            str(path),
+            media_type=media_type,
+            filename=filename,
+            headers=headers,
+        )
 
     return app

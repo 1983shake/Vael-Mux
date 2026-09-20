@@ -1,12 +1,21 @@
 """后台流水线编排：拉取 -> 解析 -> 检测 -> 导出 -> 清空重导入。
 
 核心语义：
-  - 只有流水线**正常走到导出成功**后，才清空 store 并写入本次有效节点
+  - 只有流水线正常走到导出成功后，才清空 store 并写入本次有效节点
   - 若中途失败或被手动停止：store 保持不变（不导入任何新节点）
   - include_history=True 时，历史节点仅参与检测，不写入最终 store、不导出
   - 导出数量 = 本次订阅源中的有效节点数，由 check.max_valid_nodes 唯一决定
   - 目标开关（latency_targets / speed_targets 的 enabled 字段）
+  - 判定模式（check.latency_mode / check.speed_mode：all | any）
   - 运行时应用日志级别（logging.level / VAEL_LOG_LEVEL）
+
+去重提示：
+  - 解析阶段：不同订阅源之间的重复节点
+  - 构建阶段：同一批 uuid/password/name 生成相同 ID 的节点
+
+取消语义：
+  - 所有流水线入口都通过 spawn_pipeline() 启动，任务引用记录到 _current_task
+  - stop_pipeline() 对该任务调用 .cancel()
 """
 
 import asyncio
@@ -17,23 +26,35 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from app.config import load_base_config, parse_subscriptions
-from app.core.checker import check_all, check_node_metrics, is_fully_valid
-from app.core.exporter import export_all
-from app.core.fetcher import fetch_all
-from app.core.parser import parse_all
-from app.core.store import NodeStore
-from app.models import NodeRecord
-from app.utils.runtime import TaskStage, apply_log_level, state
+from app.checker import check_all, check_node_metrics, is_fully_valid
+from app.exporter import export_all
+from app.ingest import fetch_all, parse_all_with_stats
+from app.models import NodeRecord, load_base_config, normalize_mode, parse_subscriptions
+from app.runtime import TaskStage, apply_log_level, state
+from app.store import NodeStore
 
-logger = logging.getLogger("vael-mux.startup")
+logger = logging.getLogger("vael-mux.pipeline")
 
 _pipeline_lock = asyncio.Lock()
 _scheduler: AsyncIOScheduler | None = None
 _store: NodeStore | None = None
 _current_task: asyncio.Task | None = None
 
+_MODE_LABEL = {"all": "全部通过", "any": "任一通过"}
 
+
+# ============================================================ 任务启动 / 取消
+def spawn_pipeline() -> asyncio.Task:
+    """启动一次流水线任务，并把引用记录到 _current_task。
+
+    所有流水线入口都必须走这里，否则 stop_pipeline() 找不到要取消的任务。
+    """
+    global _current_task
+    _current_task = asyncio.create_task(run_pipeline())
+    return _current_task
+
+
+# ============================================================ store
 def get_store(config: dict | None = None) -> NodeStore:
     global _store
     if _store is None:
@@ -44,7 +65,6 @@ def get_store(config: dict | None = None) -> NodeStore:
 
 
 def _resolve_max_valid(config: dict) -> int:
-    """解析「有效节点」上限。优先读 max_valid_nodes，否则回退旧字段。"""
     check_cfg = config.get("check", {}) or {}
 
     def _int(key: str) -> int:
@@ -70,19 +90,27 @@ def _resolve_include_history(config: dict) -> bool:
     return False
 
 
+def _resolve_modes(config: dict) -> tuple[str, str]:
+    check_cfg = config.get("check", {}) or {}
+    return (
+        normalize_mode(check_cfg.get("latency_mode"), "all"),
+        normalize_mode(check_cfg.get("speed_mode"), "all"),
+    )
+
+
+# ============================================================ 导出（供 Web 复用）
 def select_exportable(records: list[NodeRecord], config: dict) -> list[NodeRecord]:
-    """从一批记录中筛选导出节点：启用 + 有效延迟 + 有效速度。"""
     check_cfg = config.get("check", {}) or {}
     latency_targets = check_cfg.get("latency_targets", []) or []
     speed_targets = check_cfg.get("speed_targets", []) or []
+    latency_mode, speed_mode = _resolve_modes(config)
 
-    valid = [r for r in records if r.enabled and is_fully_valid(r, latency_targets, speed_targets)]
+    valid = [r for r in records if r.enabled and is_fully_valid(r, latency_targets, speed_targets, latency_mode, speed_mode)]
     valid.sort(key=lambda r: (r.latency_ms or 10**9, -(r.speed_cps or 0)))
     return valid
 
 
 async def regenerate_subscriptions(config: dict | None = None) -> list[str]:
-    """重新生成订阅文件（供手动增删改节点 / 重测后调用）。"""
     cfg = config or load_base_config()
     store = get_store(cfg)
     records = await store.all()
@@ -113,6 +141,7 @@ async def retest_single(node_id: str) -> NodeRecord | None:
     return await store.get(node_id)
 
 
+# ============================================================ 流水线
 def _raise_if_stopped() -> None:
     if state.stop_requested:
         raise asyncio.CancelledError()
@@ -130,14 +159,24 @@ def _dedupe_preserve_order(records: list[NodeRecord]) -> list[NodeRecord]:
 
 
 def _count_enabled(check_cfg: dict) -> tuple[int, int]:
-    """统计启用的延迟/速度目标数。"""
     lat = sum(1 for t in (check_cfg.get("latency_targets") or []) if t.get("enabled", True))
     spd = sum(1 for t in (check_cfg.get("speed_targets") or []) if t.get("enabled", True))
     return lat, spd
 
 
+def _dedupe_records_by_id(records: list[NodeRecord]) -> tuple[list[NodeRecord], int]:
+    """按 NodeRecord.id 去重，返回 (去重后的列表, 移除数)。"""
+    seen = set()
+    out: list[NodeRecord] = []
+    for r in records:
+        if r.id in seen:
+            continue
+        seen.add(r.id)
+        out.append(r)
+    return out, len(records) - len(out)
+
+
 async def run_pipeline() -> None:
-    """执行一次完整流水线（拉取 -> 解析 -> 检测 -> 导出 -> 清空重导入）。"""
     if _pipeline_lock.locked():
         logger.info("流水线正在运行，跳过本次触发")
         return
@@ -157,13 +196,15 @@ async def run_pipeline() -> None:
         include_history = _resolve_include_history(config)
         concurrent = int(check_cfg.get("concurrent", 50) or 50)
         lat_n, spd_n = _count_enabled(check_cfg)
+        latency_mode, speed_mode = _resolve_modes(config)
 
         state.reset_run(total_subscriptions=len(urls), max_valid=max_valid)
         state.stage = TaskStage.CONFIG_LOADING.value
         state.message = (
             f"配置加载完成，共 {len(urls)} 个订阅源"
             + ("（含历史节点测试）" if include_history else "")
-            + f"，节点并发 {concurrent}，启用目标：延迟 {lat_n} 个 / 速度 {spd_n} 个"
+            + f"，节点并发 {concurrent}，启用目标：延迟 {lat_n} 个 / 速度 {spd_n} 个，"
+            + f"判定：延迟 {_MODE_LABEL[latency_mode]} / 速度 {_MODE_LABEL[speed_mode]}"
         )
         await state.notify()
         logger.info(state.message)
@@ -180,29 +221,48 @@ async def run_pipeline() -> None:
             await state.notify()
             raw_texts = await fetch_all(urls, progress_callback=_on_fetch_progress)
 
-            # ---------- 解析（不写入 store）----------
+            # ---------- 解析 ----------
             _raise_if_stopped()
             state.stage = TaskStage.PARSING.value
             state.message = "正在解析节点..."
             state.progress = 0.22
             await state.notify()
 
-            parsed = parse_all(raw_texts)
-            new_records = [NodeRecord.from_dict(item) for item in parsed]
+            parsed, parse_stats = parse_all_with_stats(raw_texts)
+
+            raw_records = [NodeRecord.from_dict(item) for item in parsed]
+            new_records, id_removed = _dedupe_records_by_id(raw_records)
+            if id_removed > 0:
+                logger.info(f"节点去重（ID 冲突）：移除 {id_removed} 个" f"（{len(raw_records)} -> {len(new_records)}）")
+
             new_ids = {r.id for r in new_records}
 
             all_stored = await store.all()
             history_records = [r for r in all_stored if r.id not in new_ids] if include_history else []
 
-            test_list = _dedupe_preserve_order([r for r in history_records if r.enabled] + [r for r in new_records if r.enabled])
+            combined = [r for r in history_records if r.enabled] + [r for r in new_records if r.enabled]
+            test_list = _dedupe_preserve_order(combined)
+            test_removed = len(combined) - len(test_list)
+            if test_removed > 0:
+                logger.info(f"待测列表去重：移除 {test_removed} 个重复节点")
+
             state.total_nodes = len(test_list)
 
+            dedup_hint = ""
+            if parse_stats["removed"] > 0 or id_removed > 0:
+                dedup_hint = f"；去重：移除 {parse_stats['removed']} 个源内重复" + (f" + {id_removed} 个 ID 冲突" if id_removed > 0 else "")
+
             if include_history and history_records:
-                state.message = f"新节点 {len(new_records)} 个，" f"历史节点 {len(history_records)} 个，" f"合并待测 {len(test_list)} 个"
+                state.message = f"新节点 {len(new_records)} 个，" f"历史节点 {len(history_records)} 个，" f"合并待测 {len(test_list)} 个" + dedup_hint
             else:
-                state.message = f"解析到 {len(new_records)} 个新节点，" f"启用待测 {len(test_list)} 个"
+                state.message = f"解析到 {len(new_records)} 个新节点，" f"启用待测 {len(test_list)} 个" + dedup_hint
             await state.notify()
             logger.info(state.message)
+
+            if logger.isEnabledFor(logging.DEBUG):
+                per_src = parse_stats.get("per_source") or []
+                for i, n in enumerate(per_src):
+                    logger.debug(f"  订阅源 #{i + 1}: 解析出 {n} 个节点")
 
             # ---------- 检测 ----------
             _raise_if_stopped()
@@ -213,7 +273,11 @@ async def run_pipeline() -> None:
             speed_targets = check_cfg.get("speed_targets", []) or []
 
             state.phase = "latency"
-            state.message = f"检测中：延迟 -> 速度（上限 {max_valid or '∞'}，" f"节点并发 {concurrent}，延迟目标 {lat_n} / 速度目标 {spd_n}）"
+            state.message = (
+                f"检测中：延迟 -> 速度（上限 {max_valid or '∞'}，"
+                f"节点并发 {concurrent}，延迟 {lat_n} 个目标 [{_MODE_LABEL[latency_mode]}] / "
+                f"速度 {spd_n} 个目标 [{_MODE_LABEL[speed_mode]}]）"
+            )
             await state.notify()
 
             alive = await check_all(
@@ -226,6 +290,8 @@ async def run_pipeline() -> None:
                 max_valid=max_valid,
                 progress_callback=_on_check_progress,
                 speed_progress_callback=_on_speed_progress,
+                latency_mode=latency_mode,
+                speed_mode=speed_mode,
             )
 
             logger.info(f"检测完成: 通过节点 {len(alive)} / 待测 {len(test_list)}")
@@ -247,7 +313,7 @@ async def run_pipeline() -> None:
 
             logger.info(f"已导出 {len(valid_list)} 个有效节点" + (f"（上限 max_valid_nodes={max_valid}）" if max_valid else ""))
 
-            # ---------- 导出成功 → 清空 store，写入有效节点 ----------
+            # ---------- 清空重导入 ----------
             await store.replace_all(valid_list, preserve_user_state=True)
             await store.save()
             logger.info(
@@ -273,6 +339,8 @@ async def run_pipeline() -> None:
                 parts.append(f"已达上限 {max_valid}")
             parts.append(f"导出 {len(valid_list)} 个")
             state.message = "完成：" + "，".join(parts)
+            if parse_stats["removed"] > 0 or id_removed > 0:
+                state.message += f"（去重 {parse_stats['removed'] + id_removed} 个）"
 
             await state.notify()
             await state.broadcast_event("nodes_updated")
@@ -342,6 +410,7 @@ async def _notify_webhook(config: dict, alive: int, total: int) -> None:
         logger.warning(f"Webhook 通知失败: {e}")
 
 
+# ============================================================ 调度器
 def start_scheduler() -> None:
     global _scheduler
     if _scheduler is not None:
@@ -382,25 +451,25 @@ def reload_scheduler() -> None:
 
 
 async def _scheduled_run() -> None:
-    global _current_task
-    _current_task = asyncio.create_task(run_pipeline())
     try:
-        await _current_task
+        await spawn_pipeline()
     except asyncio.CancelledError:
         pass
+    except Exception:
+        logger.exception("定时任务执行失败")
 
 
+# ============================================================ 对外控制
 def trigger_now() -> None:
-    """立即触发一次流水线。"""
-    global _current_task
     if state.running:
         logger.info("已有任务运行中，忽略本次触发")
         return
-    _current_task = asyncio.create_task(run_pipeline())
+    spawn_pipeline()
 
 
 async def stop_pipeline() -> bool:
     global _current_task
+
     if not state.running:
         return False
 
@@ -408,6 +477,11 @@ async def stop_pipeline() -> bool:
     state.message = "正在停止..."
     await state.notify()
 
-    if _current_task and not _current_task.done():
-        _current_task.cancel()
+    task = _current_task
+    if task is not None and not task.done():
+        task.cancel()
+        logger.info("已发送取消信号")
+    else:
+        logger.warning("未找到可取消的流水线任务引用（将在下个检查点退出）")
+
     return True

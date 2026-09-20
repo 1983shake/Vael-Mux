@@ -39,6 +39,9 @@
     const FOOTER_HOMEPAGE = "https://github.com/1983shake/Vael-Mux";
     const COPYRIGHT_START_YEAR = 2026;
 
+    // 内部端口固定，仅用于拼接订阅链接
+    const INTERNAL_API_PORT = "8110";
+
     const $ = (id) => document.getElementById(id);
 
     let latencyTargets = [];
@@ -75,10 +78,10 @@
     // 订阅链接
     // ============================================================
     function apiBase() {
-        if (location.port === "8110") {
+        if (location.port === INTERNAL_API_PORT) {
             return `${location.protocol}//${location.host}`;
         }
-        return `${location.protocol}//${location.hostname}:8110`;
+        return `${location.protocol}//${location.hostname}:${INTERNAL_API_PORT}`;
     }
 
     function setupApiLinks() {
@@ -93,22 +96,18 @@
     // 页脚：版权年份 / 项目链接 / 版本
     // ============================================================
     async function initFooter() {
-        // 版权年份：2026-当前年份（即使同年也完整显示，如 2026-2026）
         const yearEl = $("footer-year");
         if (yearEl) {
             const currentYear = new Date().getFullYear();
-            // 兜底：若系统时间早于起始年份，则显示"当前-当前"，避免出现倒序
             const startYear = Math.min(COPYRIGHT_START_YEAR, currentYear);
             yearEl.textContent = `${startYear}-${currentYear}`;
         }
 
-        // 项目主页链接（GitHub 图标 + 名称已内联在 HTML 中）
         const linkEl = $("footer-link");
         if (linkEl && !linkEl.getAttribute("href")) {
             linkEl.href = FOOTER_HOMEPAGE;
         }
 
-        // 版本号
         const verEl = $("footer-version");
         if (!verEl) return;
         try {
@@ -830,6 +829,10 @@
         container.appendChild(buildTargetRow({ enabled: true }, kind));
     }
 
+    function normalizeMode(v) {
+        return String(v || "all").trim().toLowerCase() === "any" ? "any" : "all";
+    }
+
     function fillConfigForm(cfg) {
         const server = cfg.server || {};
         const logging = cfg.logging || {};
@@ -837,9 +840,8 @@
         const output = cfg.output || {};
         const notify = cfg.notify || {};
 
+        // 端口不再由配置管理，仅填充 host
         $("cfg-server-host").value = server.host || "0.0.0.0";
-        $("cfg-server-web-port").value = server.web_port ?? 8100;
-        $("cfg-server-api-port").value = server.api_port ?? 8110;
 
         const level = String(logging.level || "INFO").toUpperCase();
         $("cfg-logging-level").value = level;
@@ -854,6 +856,9 @@
         $("cfg-check-max-valid").value = check.max_valid_nodes ?? 0;
         $("cfg-check-schedule").value = check.schedule || "";
         $("cfg-check-include-history").checked = !!check.include_history;
+
+        $("cfg-check-latency-mode").value = normalizeMode(check.latency_mode);
+        $("cfg-check-speed-mode").value = normalizeMode(check.speed_mode);
 
         renderTargetList("cfg-latency-targets", check.latency_targets || [], "latency");
         renderTargetList("cfg-speed-targets", check.speed_targets || [], "speed");
@@ -895,9 +900,8 @@
 
         return {
             server: {
+                // 端口不再由配置管理，只提交 host
                 host: $("cfg-server-host").value.trim() || "0.0.0.0",
-                web_port: Number($("cfg-server-web-port").value) || 8100,
-                api_port: Number($("cfg-server-api-port").value) || 8110,
             },
             logging: {
                 level: $("cfg-logging-level").value,
@@ -909,6 +913,8 @@
                 samples: Number($("cfg-check-samples").value) || 3,
                 include_history: $("cfg-check-include-history").checked,
                 max_valid_nodes: Number($("cfg-check-max-valid").value) || 0,
+                latency_mode: normalizeMode($("cfg-check-latency-mode").value),
+                speed_mode: normalizeMode($("cfg-check-speed-mode").value),
                 schedule: $("cfg-check-schedule").value.trim(),
                 latency_targets: collectTargets("cfg-latency-targets", "latency"),
                 speed_targets: collectTargets("cfg-speed-targets", "speed"),
@@ -956,7 +962,6 @@
             return;
         }
 
-        // cron：5 段快速校验（后端还会用 APScheduler 再校验一次）
         const sched = payload.check.schedule;
         if (sched) {
             const parts = sched.trim().split(/\s+/);
