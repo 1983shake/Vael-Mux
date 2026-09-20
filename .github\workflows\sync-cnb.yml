@@ -1,0 +1,77 @@
+# ============================================================================
+# GitHub Actions：同步 GitHub → CNB
+#   功能：
+#     1. main 分支 push -> 推送 main 到 CNB
+#     2. release-v* tag  -> 推送 tag 到 CNB（触发 CNB 建 Release + 构建 Docker 镜像）
+#                        并在 GitHub 端建立对应的 Release
+#
+#   前置要求（GitHub → Settings → Secrets and variables → Actions）：
+#     GIT_PASSWORD：CNB 访问令牌（具备仓库写权限）
+# ============================================================================
+name: Sync to CNB and Create Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['release-v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CNB_REPO: cnb.cool/1983shake/Vael-Mux.git
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git and CNB remote
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git remote remove cnb 2>/dev/null || true
+          git remote add cnb \
+            "https://cnb:${{ secrets.GIT_PASSWORD }}@${{ env.CNB_REPO }}"
+
+      - name: Extract version from tag
+        id: version
+        if: startsWith(github.ref, 'refs/tags/release-v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#release-v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "版本号: ${VERSION}"
+
+      - name: Push main branch to CNB
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "==> 同步 main 到 CNB"
+          git push cnb "HEAD:main" --force
+          echo "==> main 同步完成"
+
+      - name: Push tag to CNB
+        if: startsWith(github.ref, 'refs/tags/release-v')
+        run: |
+          echo "==> 同步 tag ${GITHUB_REF_NAME} 到 CNB"
+          git push cnb \
+            "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}" --force
+          echo "==> tag 同步完成"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/release-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Vael-Mux_V${{ steps.version.outputs.VERSION }}
+          generate_release_notes: true
