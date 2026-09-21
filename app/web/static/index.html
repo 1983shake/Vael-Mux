@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1024">
+    <title>Vael-Mux 控制台</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>Vael-Mux</h1>
+            <div class="subtitle">订阅聚合 · 节点检测 · 多格式输出</div>
+        </header>
+
+        <div class="layout">
+            <!-- ======================= 主区域 ======================= -->
+            <div class="main-col">
+
+                <!-- ========== 状态 ========== -->
+                <section class="card">
+                    <div class="stage-row">
+                        <span class="dot" id="stage-dot"></span>
+                        <span id="stage-label" class="stage-label">连接中...</span>
+                    </div>
+                    <div class="message" id="message">正在建立实时连接...</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+
+                    <div class="stats stats-6">
+                        <div class="stat">
+                            <div class="stat-label">订阅源</div>
+                            <div class="stat-value">
+                                <span id="subs-done">0</span> / <span id="subs-total">0</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">延迟检测</div>
+                            <div class="stat-value">
+                                <span id="nodes-checked">0</span> / <span id="nodes-total">0</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">有效延迟</div>
+                            <div class="stat-value accent" id="nodes-alive">0</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">有效速度</div>
+                            <div class="stat-value purple" id="speed-passed">0</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">有效节点</div>
+                            <div class="stat-value accent">
+                                <span id="valid-nodes">0</span>
+                                <span class="stat-sep">/</span>
+                                <span id="max-valid">∞</span>
+                            </div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-label">已导出</div>
+                            <div class="stat-value small" id="nodes-exported">0</div>
+                        </div>
+                    </div>
+
+                    <!-- 速度阶段专属进度条 -->
+                    <div class="phase-progress hidden" id="speed-progress-wrap">
+                        <div class="phase-progress-label">
+                            <span>速度测试进度</span>
+                            <span id="speed-progress-text">0 / 0 · 有效 0</span>
+                        </div>
+                        <div class="progress-bar slim">
+                            <div class="progress-fill purple" id="speed-progress-fill"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- ========== 节点列表 ========== -->
+                <section class="card">
+                    <div class="section-header">
+                        <h2>节点列表</h2>
+                        <span class="section-meta" id="nodes-meta">0 / 0</span>
+                    </div>
+
+                    <div class="node-toolbar">
+                        <input id="node-search" class="input" placeholder="搜索名称 / 服务器 / 类型">
+                        <select id="node-filter" class="input">
+                            <option value="">全部</option>
+                            <option value="enabled">已启用</option>
+                            <option value="disabled">已禁用</option>
+                        </select>
+                        <button id="btn-refresh-nodes" class="btn-small">刷新</button>
+                        <button id="btn-add-node" class="btn-small primary">+ 新增节点</button>
+                        <div class="toolbar-spacer"></div>
+                        <button id="btn-batch-enable" class="btn-small" disabled>批量启用</button>
+                        <button id="btn-batch-disable" class="btn-small" disabled>批量禁用</button>
+                        <button id="btn-batch-retest" class="btn-small" disabled>批量重测</button>
+                        <button id="btn-batch-delete" class="btn-small danger" disabled>批量删除</button>
+                    </div>
+
+                    <div class="node-table-wrap">
+                        <table class="node-table">
+                            <thead id="node-thead">
+                                <!-- 动态生成 -->
+                            </thead>
+                            <tbody id="node-tbody">
+                                <tr>
+                                    <td colspan="4" class="empty">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- 分页控件 -->
+                    <div class="pagination">
+                        <div class="page-info">
+                            共 <span id="page-total">0</span> 条
+                        </div>
+                        <div class="page-controls">
+                            <button id="page-first" class="btn-page" title="首页">«</button>
+                            <button id="page-prev" class="btn-page" title="上一页">‹</button>
+                            <span class="page-indicator">
+                                <span id="page-current">1</span> / <span id="page-count">1</span>
+                            </span>
+                            <button id="page-next" class="btn-page" title="下一页">›</button>
+                            <button id="page-last" class="btn-page" title="末页">»</button>
+                        </div>
+                        <div class="page-size">
+                            每页
+                            <select id="page-size">
+                                <option value="5">5</option>
+                                <option value="10">10</option>
+                                <option value="20">20</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                            条
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <!-- ======================= 右侧边栏 ======================= -->
+            <aside class="side-col">
+
+                <!-- ========== 操作 ========== -->
+                <section class="card">
+                    <h2>操作</h2>
+                    <div class="side-actions">
+                        <button id="btn-trigger" class="btn primary block">重新更新节点</button>
+                        <button id="btn-stop" class="btn danger block" disabled>停止</button>
+                        <button id="btn-open-config" class="btn block">配置</button>
+                    </div>
+                    <div class="hint" id="action-hint"></div>
+                </section>
+
+                <!-- ========== 日志 ========== -->
+                <section class="card">
+                    <div class="log-header">
+                        <h2>日志</h2>
+                        <button id="btn-clear-log" class="btn-mini" type="button" title="清空日志">清空</button>
+                    </div>
+                    <div class="log-view" id="log-view"></div>
+                </section>
+
+                <!-- ========== 订阅端点 ========== -->
+                <section class="card">
+                    <h2>订阅端点</h2>
+                    <div class="sub-list">
+                        <div class="sub-item">
+                            <span class="sub-name">Mihomo / Clash.Meta</span>
+                            <a class="sub-link" data-fmt="mihomo" href="#" target="_blank">/sub/mihomo</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">sing-box</span>
+                            <a class="sub-link" data-fmt="singbox" href="#" target="_blank">/sub/singbox</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">v2ray (v2rayN / v2rayNG / v2rayA)</span>
+                            <a class="sub-link" data-fmt="v2ray" href="#" target="_blank">/sub/v2ray</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">v2ray 完整配置 (config.json)</span>
+                            <a class="sub-link" data-fmt="v2ray-json" href="#" target="_blank">/sub/v2ray-json</a>
+                        </div>
+                        <div class="sub-item">
+                            <span class="sub-name">通用 Base64</span>
+                            <a class="sub-link" data-fmt="base64" href="#" target="_blank">/sub/base64</a>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </div>
+
+        <footer>
+            <div class="footer-line footer-ws">
+                <span id="ws-state" class="ws-state">WebSocket 连接中...</span>
+            </div>
+            <div class="footer-line footer-meta">
+                <span>© <span id="footer-year">2026-2026</span></span>
+                <span class="footer-sep">·</span>
+                <a id="footer-link" class="footer-link" href="https://github.com/1983shake/Vael-Mux" target="_blank"
+                    rel="noopener noreferrer">
+                    <svg class="github-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                        <path fill="currentColor"
+                            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z">
+                        </path>
+                    </svg>
+                    <span>Vael-Mux</span>
+                </a>
+                <span class="footer-sep">·</span>
+                <span>v<span id="footer-version">—</span></span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- ========== 编辑 / 新增 弹窗 ========== -->
+    <div id="edit-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h3 id="edit-modal-title">编辑节点</h3>
+                    <div class="modal-subtitle" id="edit-modal-subtitle"></div>
+                </div>
+                <button id="btn-close-edit" class="icon-btn" type="button" aria-label="关闭">×</button>
+            </div>
+
+            <form id="edit-form" class="modal-form" autocomplete="off">
+                <input type="hidden" name="id">
+
+                <div class="form-section">
+                    <div class="form-section-title">基础信息</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>名称</label>
+                            <input name="name" class="input" type="text" placeholder="节点显示名称">
+                        </div>
+                        <div class="form-field">
+                            <label>协议类型</label>
+                            <select name="type" class="input">
+                                <option value="vmess">vmess</option>
+                                <option value="vless">vless</option>
+                                <option value="trojan">trojan</option>
+                                <option value="ss">shadowsocks</option>
+                                <option value="hysteria2">hysteria2</option>
+                            </select>
+                        </div>
+                        <div class="form-field" data-types="vmess,vless">
+                            <label>传输网络</label>
+                            <select name="network" class="input">
+                                <option value="tcp">tcp</option>
+                                <option value="ws">websocket</option>
+                                <option value="grpc">gRPC</option>
+                                <option value="h2">HTTP/2</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>服务器地址</label>
+                            <input name="server" class="input mono" type="text" placeholder="example.com 或 IP"
+                                spellcheck="false">
+                        </div>
+                        <div class="form-field">
+                            <label>端口</label>
+                            <input name="port" class="input mono" type="number" min="1" max="65535" placeholder="443">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">认证信息</div>
+                    <div class="form-grid">
+                        <div class="form-field full" data-types="vmess,vless">
+                            <label>UUID</label>
+                            <input name="uuid" class="input mono" type="text"
+                                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false">
+                        </div>
+                        <div class="form-field full" data-types="trojan,ss,hysteria2">
+                            <label>密码</label>
+                            <input name="password" class="input mono" type="text" spellcheck="false">
+                        </div>
+                        <div class="form-field" data-types="vmess">
+                            <label>加密方式</label>
+                            <input name="cipher" class="input mono" type="text" placeholder="auto" spellcheck="false">
+                        </div>
+                        <div class="form-field" data-types="ss">
+                            <label>加密方式</label>
+                            <input name="cipher" class="input mono" type="text" placeholder="aes-256-gcm"
+                                spellcheck="false">
+                        </div>
+                        <div class="form-field" data-types="vmess">
+                            <label>AlterID</label>
+                            <input name="alterId" class="input mono" type="number" min="0" value="0">
+                        </div>
+                        <div class="form-field" data-types="vless">
+                            <label>Flow</label>
+                            <input name="flow" class="input mono" type="text" placeholder="xtls-rprx-vision"
+                                spellcheck="false">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">传输与安全</div>
+                    <div class="form-grid">
+                        <div class="form-field" data-types="vmess,vless,trojan,hysteria2">
+                            <label>SNI / Peer</label>
+                            <input name="sni" class="input mono" type="text" placeholder="example.com"
+                                spellcheck="false">
+                        </div>
+                        <div class="form-field" data-types="vmess,vless" data-nets="ws,h2">
+                            <label>Host</label>
+                            <input name="host" class="input mono" type="text" spellcheck="false">
+                        </div>
+                        <div class="form-field full" data-types="vmess,vless" data-nets="ws,h2,grpc">
+                            <label>Path</label>
+                            <input name="path" class="input mono" type="text" placeholder="/path" spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="checkbox-row">
+                        <label class="checkbox-item" data-types="vmess,vless">
+                            <input type="checkbox" name="tls">
+                            <span>启用 TLS</span>
+                        </label>
+                        <label class="checkbox-item" data-types="vmess,vless,trojan,hysteria2">
+                            <input type="checkbox" name="skip_cert_verify">
+                            <span>跳过证书验证</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">状态</div>
+                    <label class="checkbox-item">
+                        <input type="checkbox" name="enabled">
+                        <span>启用此节点（参与检测与订阅导出）</span>
+                    </label>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" id="btn-delete-node" class="btn danger" style="display:none;">删除节点</button>
+                    <div class="modal-actions-spacer"></div>
+                    <button type="button" id="btn-cancel-edit" class="btn">取消</button>
+                    <button type="submit" id="btn-submit-edit" class="btn primary">保存并重测</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ========== 配置弹窗 ========== -->
+    <div id="config-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <div>
+                    <h3>配置</h3>
+                    <div class="modal-subtitle">保存后自动重新加载生效</div>
+                </div>
+                <button id="btn-close-config" class="icon-btn" type="button" aria-label="关闭">×</button>
+            </div>
+
+            <div class="modal-form">
+                <div class="form-section">
+                    <div class="form-section-title">服务器</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>监听地址</label>
+                            <input id="cfg-server-host" class="input mono" type="text" spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="form-hint">
+                        端口说明：内部固定 <code>8100</code>(Web) / <code>8110</code>(API)，
+                        对外端口由 <code>docker-compose.yml</code> 的 <code>ports</code> 映射控制。
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">日志</div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>日志级别</label>
+                            <select id="cfg-logging-level" class="input">
+                                <option value="DEBUG">DEBUG</option>
+                                <option value="INFO">INFO</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="CRITICAL">CRITICAL</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">订阅源（每行一个，支持 # 注释）</div>
+                    <textarea id="cfg-subscriptions" class="input mono" rows="6" spellcheck="false"></textarea>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">检测参数</div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>节点并发数</label>
+                            <input id="cfg-check-concurrent" class="input mono" type="number" min="1">
+                        </div>
+                        <div class="form-field">
+                            <label>单次超时（毫秒）</label>
+                            <input id="cfg-check-timeout" class="input mono" type="number" min="100">
+                        </div>
+                        <div class="form-field">
+                            <label>延迟采样次数</label>
+                            <input id="cfg-check-samples" class="input mono" type="number" min="1">
+                        </div>
+                        <div class="form-field">
+                            <label>有效节点上限（0=不限）</label>
+                            <input id="cfg-check-max-valid" class="input mono" type="number" min="0">
+                        </div>
+                        <div class="form-field">
+                            <label>有效延迟判定</label>
+                            <select id="cfg-check-latency-mode" class="input">
+                                <option value="all">全部启用目标通过</option>
+                                <option value="any">任一启用目标通过</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>有效速度判定</label>
+                            <select id="cfg-check-speed-mode" class="input">
+                                <option value="all">全部启用目标通过</option>
+                                <option value="any">任一启用目标通过</option>
+                            </select>
+                        </div>
+                        <div class="form-field full">
+                            <label>定时任务 cron 表达式</label>
+                            <input id="cfg-check-schedule" class="input mono" type="text" placeholder="0 9,21 * * *"
+                                spellcheck="false">
+                            <div class="form-hint">
+                                5 段格式：分 时 日 月 周。例如 <code>0 9,21 * * *</code>（每天 9 点、21 点）。
+                                注意：星期字段 <code>0=周一</code>，周日请写 <code>sun</code>。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-hint">
+                        有效延迟：节点自身握手成功为硬前提，再按所选模式判定各启用延迟目标；
+                        有效速度：按所选模式判定各启用速度目标。
+                        无启用目标时两种模式均视为通过。
+                    </div>
+                    <div class="checkbox-row">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="cfg-check-include-history">
+                            <span>检测时并入历史节点</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">延迟目标</div>
+                    <div id="cfg-latency-targets" class="target-editor"></div>
+                    <button type="button" class="btn-small" id="btn-add-latency-target">+ 添加延迟目标</button>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">速度目标</div>
+                    <div id="cfg-speed-targets" class="target-editor"></div>
+                    <button type="button" class="btn-small" id="btn-add-speed-target">+ 添加速度目标</button>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">输出</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>输出目录</label>
+                            <input id="cfg-output-dir" class="input mono" type="text" spellcheck="false">
+                        </div>
+                    </div>
+                    <div class="checkbox-row" id="cfg-output-formats">
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="mihomo"><span>mihomo</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="singbox"><span>singbox</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="base64"><span>base64</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="v2ray"><span>v2ray</span></label>
+                        <label class="checkbox-item"><input type="checkbox" class="cfg-format"
+                                value="v2ray-json"><span>v2ray-json</span></label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">通知（可选）</div>
+                    <div class="form-grid">
+                        <div class="form-field full">
+                            <label>Webhook URL</label>
+                            <input id="cfg-notify-webhook" class="input mono" type="text" spellcheck="false">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <div class="form-hint" style="flex:1 1 0; margin-top:0;">
+                        保存会重写整个 YAML 文件，原文件中的自定义注释将被覆盖。
+                    </div>
+                    <button type="button" id="btn-cancel-config" class="btn">取消</button>
+                    <button type="button" id="btn-save-config" class="btn primary">保存</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
