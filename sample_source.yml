@@ -1,0 +1,70 @@
+# 机场源
+subscriptions: |
+  # https://free.datiya.com/uploads/{Ymd}-clash.yaml
+  # https://node.freeclashnode.com/uploads/{Y}/{mm}/0-{Ymd}.yaml
+  # https://node.freeclashnode.com/uploads/{Y}/{mm}/1-{Ymd}.yaml
+  # https://node.freeclashnode.com/uploads/{Y}/{mm}/2-{Ymd}.yaml
+  # https://node.freeclashnode.com/uploads/{Y}/{mm}/3-{Ymd}.yaml
+  # https://node.freeclashnode.com/uploads/{Y}/{mm}/4-{Ymd}.yaml
+  https://raw.githubusercontent.com/free-nodes/v2rayfree/main/v{ymd}1
+  https://raw.githubusercontent.com/free-nodes/v2rayfree/main/v{ymd}2
+  https://raw.githubusercontent.com/free-nodes/clashfree/main/clash{Ymd}.yml
+  https://raw.githubusercontent.com/firefoxmmx2/v2rayshare_subcription/main/subscription/clash_sub.yaml
+  https://raw.githubusercontent.com/xiaoji235/airport-free/main/clash/naidounode.txt
+  https://raw.githubusercontent.com/mahdibland/SSAggregator/master/sub/sub_merge_yaml.yml
+  https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list.yml
+  https://raw.githubusercontent.com/zhangkaiitugithub/passcro/main/speednodes.yaml
+  https://raw.githubusercontent.com/aiboboxx/v2rayfree/main/README.md
+  https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/snippets/nodes.meta.yml
+  https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.meta.yml
+  https://raw.githubusercontent.com/anaer/Sub/main/clash.yaml
+  https://raw.githubusercontent.com/free18/v2ray/main/c.yaml
+  https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.yml
+  https://raw.githubusercontent.com/Ruk1ng001/freeSub/main/clash.yaml
+  https://raw.githubusercontent.com/SoliSpirit/v2ray-configs/main/all_configs.txt
+  https://raw.githubusercontent.com/ripaojiedian/freenode/main/clash
+  https://raw.githubusercontent.com/go4sharing/sub/main/sub.yaml
+  https://raw.githubusercontent.com/actionsfz/v2ray/master/all.yaml
+  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+  https://raw.githubusercontent.com/acymz/AutoVPN/main/data/V2.txt
+  https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/wenode.txt
+  https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/v2rayshare.txt
+  https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/nodefree.txt
+  https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/ndnode.txt
+  https://raw.githubusercontent.com/Barabama/FreeNodes/main/nodes/clashmeta.txt
+  https://raw.githubusercontent.com/xiaoji235/airport-free/main/v2ray/v2rayshare.txt
+  https://raw.githubusercontent.com/xiaoji235/airport-free/main/v2ray.txt
+  https://raw.githubusercontent.com/mheidari98/.proxy/main/all
+  https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/sub.txt
+  https://raw.githubusercontent.com/PangTouY00/Auto_proxy/main/Long_term_subscription_num
+  https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge_yaml.yml
+  https://raw.githubusercontent.com/Misaka-blog/chromego_merge/main/sub/merged_proxies_new.yaml
+
+# 检测源
+check:
+  latency_targets:
+  - name: CF
+    url: https://www.cloudflare.com/cdn-cgi/trace
+    enabled: false
+  - name: GG
+    url: https://www.google.com/generate_204
+    enabled: false
+  - name: GH
+    url: https://github.com/robots.txt
+    enabled: true
+  - name: tg
+    url: https://td.telegram.org
+    enabled: true
+  speed_targets:
+  - name: CF
+    url: https://speed.cloudflare.com/__down?bytes=2000000
+    enabled: false
+    size_hint: 2000000
+  - name: GH
+    url: https://raw.githubusercontent.com/git/git/master/README.md
+    enabled: true
+    size_hint: 500000
+  - name: gh2
+    url: https://github.com/2dust/v2rayN/releases/download/2.30/v2rayN.zip
+    enabled: true
+    size_hint: 100000

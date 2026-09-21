@@ -216,9 +216,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
-# 自定义忽略
-README.md
-docker-compose.yml
-.cnb.yml
-sample_source.yml
