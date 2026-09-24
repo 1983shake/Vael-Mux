@@ -12,7 +12,7 @@
     <div class="container">
         <header>
             <h1>Vael-Mux</h1>
-            <div class="subtitle">订阅聚合 · 节点检测 · 多格式输出</div>
+            <div class="subtitle">订阅聚合 · 节点检测 · 多格式输出 · 内置代理</div>
         </header>
 
         <div class="layout">
@@ -155,6 +155,26 @@
                         <button id="btn-open-config" class="btn block">配置</button>
                     </div>
                     <div class="hint" id="action-hint"></div>
+                </section>
+
+                <!-- ========== 内置代理 ========== -->
+                <section class="card">
+                    <div class="log-header">
+                        <h2>内置代理</h2>
+                        <span class="proxy-badge" id="proxy-badge">已停止</span>
+                    </div>
+                    <div class="proxy-info">
+                        <div class="proxy-row"><span>模式</span><span id="proxy-mode">—</span></div>
+                        <div class="proxy-row"><span>HTTP</span><span id="proxy-http" class="mono">—</span></div>
+                        <div class="proxy-row"><span>SOCKS5</span><span id="proxy-socks" class="mono">—</span></div>
+                        <div class="proxy-row"><span>节点</span><span id="proxy-nodes">0</span></div>
+                        <div class="proxy-row"><span>选择</span><span id="proxy-selected" class="mono">—</span></div>
+                    </div>
+                    <div class="side-actions">
+                        <button id="btn-proxy-restart" class="btn block">重启代理</button>
+                        <button id="btn-proxy-stop" class="btn danger block">停止代理</button>
+                    </div>
+                    <div class="hint" id="proxy-hint"></div>
                 </section>
 
                 <!-- ========== 日志 ========== -->
@@ -483,6 +503,62 @@
                                 value="v2ray"><span>v2ray</span></label>
                         <label class="checkbox-item"><input type="checkbox" class="cfg-format"
                                 value="v2ray-json"><span>v2ray-json</span></label>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title">内置代理</div>
+                    <div class="checkbox-row">
+                        <label class="checkbox-item">
+                            <input type="checkbox" id="cfg-proxy-enabled">
+                            <span>启用内置代理（基于 sing-box）</span>
+                        </label>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-field">
+                            <label>监听模式</label>
+                            <select id="cfg-proxy-mode" class="input">
+                                <option value="local">本地（仅 127.0.0.1）</option>
+                                <option value="lan">局域网（0.0.0.0 + 可选认证）</option>
+                                <option value="remote">远程（0.0.0.0 + 强制认证）</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>节点选择</label>
+                            <select id="cfg-proxy-auto" class="input">
+                                <option value="1">自动（延迟最低）</option>
+                                <option value="0">手动指定</option>
+                            </select>
+                        </div>
+                        <div class="form-field">
+                            <label>HTTP 端口</label>
+                            <input id="cfg-proxy-http-port" class="input mono" type="number" min="1" max="65535">
+                        </div>
+                        <div class="form-field">
+                            <label>SOCKS5 端口</label>
+                            <input id="cfg-proxy-socks-port" class="input mono" type="number" min="1" max="65535">
+                        </div>
+                        <div class="form-field">
+                            <label>认证用户名（LAN / 远程）</label>
+                            <input id="cfg-proxy-username" class="input mono" type="text" spellcheck="false">
+                        </div>
+                        <div class="form-field">
+                            <label>认证密码（LAN / 远程）</label>
+                            <input id="cfg-proxy-password" class="input mono" type="password" spellcheck="false">
+                        </div>
+                        <div class="form-field full">
+                            <label>指定节点 ID（手动选择时生效）</label>
+                            <input id="cfg-proxy-node-id" class="input mono" type="text" spellcheck="false">
+                            <div class="form-hint">
+                                留空则使用首个节点。节点 ID 可在节点编辑弹窗的副标题中查看。
+                            </div>
+                        </div>
+                    </div>
+                    <div class="form-hint">
+                        端口需在 <code>docker-compose.yml</code> 中映射后才能从容器外访问。
+                        <b>本地</b> 模式仅监听 <code>127.0.0.1</code>，容器外部不可达。
+                        如需让宿主机通过本地代理访问，可将端口映射写为
+                        <code>"127.0.0.1:7890:7890"</code> 并选择 <b>局域网</b> 模式。
                     </div>
                 </div>
 

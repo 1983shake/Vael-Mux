@@ -1034,7 +1034,6 @@ footer {
     opacity: 0.85;
 }
 
-/* 项目名称超链接（GitHub 图标 + 名称） */
 .footer-link {
     display: inline-flex;
     align-items: center;
@@ -1060,4 +1059,46 @@ footer {
 .footer-sep {
     opacity: 0.4;
     user-select: none;
+}
+
+/* ============================================================ 内置代理卡片 */
+.proxy-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #2a2f3a;
+    color: var(--muted);
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.proxy-badge.on {
+    background: #14301f;
+    color: #4ade80;
+}
+
+.proxy-info {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+    font-size: 12px;
+}
+
+.proxy-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+}
+
+.proxy-row>span:last-child {
+    color: var(--fg);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+    text-align: right;
 }

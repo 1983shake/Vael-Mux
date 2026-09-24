@@ -1,7 +1,7 @@
 """Web 管理界面 (8100) + API / 订阅输出服务 (8110)。
 
 本模块由原 app/web/app.py 与 app/web/api.py 合并而来：
-  - create_web_app()：Web 管理界面（含 WebSocket 实时状态、配置面板）
+  - create_web_app()：Web 管理界面（含 WebSocket 实时状态、配置面板、代理控制）
   - create_api_app()：订阅输出（/sub/{fmt}）
 
 端口说明：
@@ -30,6 +30,7 @@ from app.models import (
     save_config,
 )
 from app.pipeline import (
+    apply_proxy_config,
     get_store,
     regenerate_subscriptions,
     reload_scheduler,
@@ -39,6 +40,7 @@ from app.pipeline import (
     stop_pipeline,
     trigger_now,
 )
+from app.proxy import proxy_manager
 from app.runtime import (
     LOG_BACKFILL,
     TaskStage,
@@ -99,6 +101,7 @@ _NO_CACHE_HEADERS = {
 }
 
 _VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
+_VALID_PROXY_MODES = frozenset({"local", "lan", "remote"})
 
 # API 订阅格式映射
 FORMAT_MAP = {
@@ -151,6 +154,10 @@ async def _background_bootstrap() -> None:
         start_scheduler()
     except Exception:
         logger.exception("调度器启动失败")
+    try:
+        await apply_proxy_config()
+    except Exception:
+        logger.exception("代理启动失败")
 
 
 @asynccontextmanager
@@ -164,12 +171,18 @@ async def _web_lifespan(app: FastAPI):
     logger.info("Web 服务就绪，开始后台初始化")
 
     task = asyncio.create_task(_background_bootstrap())
-    yield
-    task.cancel()
     try:
-        await task
-    except (asyncio.CancelledError, Exception):
-        pass
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+        try:
+            await proxy_manager.stop()
+        except Exception:
+            logger.exception("停止内置代理失败")
 
 
 def _sort_records(records: List[NodeRecord]) -> None:
@@ -183,12 +196,10 @@ def _sort_records(records: List[NodeRecord]) -> None:
 
 
 def _validate_config(payload: Dict[str, Any]) -> None:
-    """校验即将写回的配置。
-
-    注意：不再校验 server.web_port / server.api_port，因为端口不再由配置管理。
-    """
+    """校验即将写回的配置。"""
     check = payload.get("check") or {}
     output = payload.get("output") or {}
+    proxy = payload.get("proxy") or {}
 
     # ---- logging ----
     level = str((payload.get("logging") or {}).get("level") or "INFO").upper()
@@ -252,6 +263,31 @@ def _validate_config(payload: Dict[str, Any]) -> None:
         for f in formats:
             if not str(f).strip():
                 raise HTTPException(400, "输出格式不能包含空值")
+
+    # ---- proxy ----
+    if not isinstance(proxy, dict):
+        raise HTTPException(400, "proxy 段必须为对象")
+
+    mode = str(proxy.get("mode") or "local").strip().lower()
+    if mode not in _VALID_PROXY_MODES:
+        raise HTTPException(400, "代理模式无效（应为 local / lan / remote）")
+
+    for key, label in (("http_port", "代理 HTTP 端口"), ("socks_port", "代理 SOCKS 端口")):
+        v = proxy.get(key)
+        if v is None:
+            continue
+        try:
+            port = int(v)
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{label}必须为整数")
+        if not (1 <= port <= 65535):
+            raise HTTPException(400, f"{label}必须在 1-65535 之间")
+
+    if proxy.get("enabled") and mode == "remote":
+        u = str(proxy.get("username") or "").strip()
+        p = str(proxy.get("password") or "").strip()
+        if not u or not p:
+            raise HTTPException(400, "远程代理模式必须配置用户名与密码")
 
 
 def create_web_app() -> FastAPI:
@@ -343,9 +379,15 @@ def create_web_app() -> FastAPI:
         except Exception:
             logger.exception("调度器重载失败")
 
+        try:
+            await apply_proxy_config()
+        except Exception:
+            logger.exception("应用代理配置失败")
+
         logger.info(f"配置已保存到 {path}，日志级别：{applied_level}")
 
         await state.broadcast_event("nodes_updated")
+        await state.broadcast_event("proxy_updated")
 
         return {
             "ok": True,
@@ -400,6 +442,41 @@ def create_web_app() -> FastAPI:
             "include_history": bool(check_cfg.get("include_history", False)),
             "max_valid_nodes": state.max_valid_nodes,
         }
+
+    # ----------------------------------------------------- 内置代理
+    @app.get("/api/proxy")
+    async def get_proxy():
+        cfg = load_base_config()
+        proxy_cfg = cfg.get("proxy") or {}
+        return JSONResponse(
+            {
+                "config": proxy_cfg,
+                "status": proxy_manager.status(),
+                "binary_available": proxy_manager.binary_available(),
+            },
+            headers=_NO_CACHE_HEADERS,
+        )
+
+    @app.post("/api/proxy/restart")
+    async def restart_proxy():
+        cfg = load_base_config()
+        proxy_cfg = cfg.get("proxy") or {}
+        if not proxy_cfg.get("enabled"):
+            return JSONResponse(
+                {"ok": False, "message": "代理未启用（请先在配置中开启）"},
+                status_code=409,
+            )
+        status = await apply_proxy_config(cfg)
+        await state.broadcast_event("proxy_updated")
+        if status.get("error"):
+            return JSONResponse({"ok": False, "status": status}, status_code=500)
+        return {"ok": True, "status": status}
+
+    @app.post("/api/proxy/stop")
+    async def stop_proxy():
+        status = await proxy_manager.stop()
+        await state.broadcast_event("proxy_updated")
+        return {"ok": True, "status": status}
 
     # ----------------------------------------------------- 节点列表（后端分页）
     @app.get("/api/nodes")
