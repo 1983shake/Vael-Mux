@@ -42,29 +42,39 @@ subscriptions: |
 
 # 检测源
 check:
+  concurrent: 50
+  timeout_ms: 5000
+  samples: 3
+  include_history: false
+  max_valid_nodes: 0
+  latency_mode: any
+  speed_mode: any
   latency_targets:
-  - name: CF
-    url: https://www.cloudflare.com/cdn-cgi/trace
-    enabled: false
-  - name: GG
-    url: https://www.google.com/generate_204
-    enabled: false
-  - name: GH
-    url: https://github.com/robots.txt
-    enabled: true
-  - name: tg
-    url: https://td.telegram.org
-    enabled: true
+    - name: CF
+      url: https://www.cloudflare.com/cdn-cgi/trace
+      enabled: true
+    - name: GG
+      url: https://www.google.com/generate_204
+      enabled: true
+    - name: GH
+      url: https://github.com/robots.txt
+      enabled: true
+    - name: tg
+      url: https://td.telegram.org
+      enabled: true
+    - name: docker
+      url: https://registry-1.docker.io/v2/
+      enabled: true
   speed_targets:
-  - name: CF
-    url: https://speed.cloudflare.com/__down?bytes=2000000
-    enabled: false
-    size_hint: 2000000
-  - name: GH
-    url: https://raw.githubusercontent.com/git/git/master/README.md
-    enabled: true
-    size_hint: 500000
-  - name: gh2
-    url: https://github.com/2dust/v2rayN/releases/download/2.30/v2rayN.zip
-    enabled: true
-    size_hint: 100000
+    - name: CF
+      url: https://speed.cloudflare.com/__down?bytes=2000000
+      enabled: true
+      size_hint: 2000000
+    - name: GH
+      url: https://raw.githubusercontent.com/git/git/master/README.md
+      enabled: true
+      size_hint: 500000
+    - name: gh2
+      url: https://github.com/2dust/v2rayN/releases/download/2.30/v2rayN.zip
+      enabled: true
+      size_hint: 200000
