@@ -7,14 +7,8 @@ services:
     container_name: vael-mux
     restart: unless-stopped
     ports:
-      - "8100:8100" # Web 管理界面
-      - "8110:8110" # API / 订阅输出端口
-      - "7890:7890" # 内置 HTTP 代理（sing-box）
-      - "7891:7891" # 内置 SOCKS5 代理（sing-box）
-      # 若只想让宿主机本地访问代理，改为：
-      #   - "127.0.0.1:7890:7890"
-      #   - "127.0.0.1:7891:7891"
-      # 并在配置中选择「局域网」监听模式。
+      - "8100:8100"       # Web 管理界面
+      - "8110:8110"       # API / 订阅输出端口
     volumes:
       - ./config:/app/config
       - ./output:/app/output
@@ -23,7 +17,7 @@ services:
       - VAEL_LOG_LEVEL=INFO
       - VAEL_CONFIG_PATH=/app/config/config.yaml
     healthcheck:
-      test: [ "CMD", "curl", "-fsS", "http://localhost:8100/health" ]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8100/health"]
       interval: 15s
       timeout: 5s
       retries: 5

@@ -8,7 +8,6 @@
   - 目标开关（latency_targets / speed_targets 的 enabled 字段）
   - 判定模式（check.latency_mode / check.speed_mode：all | any）
   - 运行时应用日志级别（logging.level / VAEL_LOG_LEVEL）
-  - 流水线成功后自动刷新内置代理（proxy 段）
 
 去重提示：
   - 解析阶段：不同订阅源之间的重复节点
@@ -46,7 +45,10 @@ _MODE_LABEL = {"all": "全部通过", "any": "任一通过"}
 
 # ============================================================ 任务启动 / 取消
 def spawn_pipeline() -> asyncio.Task:
-    """启动一次流水线任务，并把引用记录到 _current_task。"""
+    """启动一次流水线任务，并把引用记录到 _current_task。
+
+    所有流水线入口都必须走这里，否则 stop_pipeline() 找不到要取消的任务。
+    """
     global _current_task
     _current_task = asyncio.create_task(run_pipeline())
     return _current_task
@@ -116,22 +118,6 @@ async def regenerate_subscriptions(config: dict | None = None) -> list[str]:
     await export_all([r.to_dict() for r in selected], cfg.get("output", {}))
     state.exported_nodes = len(selected)
     return [r.id for r in selected]
-
-
-async def apply_proxy_config(config: dict | None = None) -> dict:
-    """根据当前配置启动 / 重启 / 停止内置代理。"""
-    from app.proxy import proxy_manager
-
-    cfg = config or load_base_config()
-    proxy_cfg = cfg.get("proxy") or {}
-
-    if not proxy_cfg.get("enabled"):
-        return await proxy_manager.stop()
-
-    store = get_store(cfg)
-    records = await store.all()
-    valid = select_exportable(records, cfg)
-    return await proxy_manager.start(proxy_cfg, valid)
 
 
 async def retest_single(node_id: str) -> NodeRecord | None:
@@ -336,12 +322,6 @@ async def run_pipeline() -> None:
                 + (f"，历史节点 {len(history_records)} 个已移除" if include_history and history_records else "")
             )
 
-            # ---------- 刷新内置代理 ----------
-            try:
-                await apply_proxy_config(config)
-            except Exception:
-                logger.exception("刷新内置代理失败")
-
             # ---------- 完成 ----------
             state.phase = ""
             state.limit_reached = bool(max_valid and len(valid_list) >= max_valid)
@@ -364,7 +344,6 @@ async def run_pipeline() -> None:
 
             await state.notify()
             await state.broadcast_event("nodes_updated")
-            await state.broadcast_event("proxy_updated")
             await _notify_webhook(config, len(valid_list), len(test_list))
 
         except asyncio.CancelledError:

@@ -35,9 +35,11 @@
     const LOG_MAX_LINES = 500;
     const LOG_AUTOSCROLL_THRESHOLD = 40;
 
+    // 页脚：项目主页 + 版权起始年份
     const FOOTER_HOMEPAGE = "https://github.com/1983shake/Vael-Mux";
     const COPYRIGHT_START_YEAR = 2026;
 
+    // 内部端口固定，仅用于拼接订阅链接
     const INTERNAL_API_PORT = "8110";
 
     const $ = (id) => document.getElementById(id);
@@ -246,11 +248,6 @@
                 return;
             }
 
-            if (msg.event === "proxy_updated") {
-                loadProxyStatus();
-                return;
-            }
-
             renderState(msg);
             if (msg.stage === "idle" || msg.stage === "stopped") loadNodes();
         };
@@ -265,7 +262,7 @@
     }
 
     // ============================================================
-    // 表格列头
+    // 表格列头（动态，含启用/禁用状态）
     // ============================================================
     function targetsChanged(a, b) {
         if (a.length !== b.length) return true;
@@ -745,102 +742,6 @@
     }
 
     // ============================================================
-    // 内置代理
-    // ============================================================
-    async function loadProxyStatus() {
-        try {
-            const resp = await fetch("/api/proxy", { cache: "no-store" });
-            if (!resp.ok) return;
-            const data = await resp.json();
-            renderProxy(data);
-        } catch (_) { }
-    }
-
-    function renderProxy(data) {
-        const cfg = data.config || {};
-        const st = data.status || {};
-        const running = !!st.running;
-
-        const badge = $("proxy-badge");
-        if (badge) {
-            badge.textContent = running ? "运行中" : "已停止";
-            badge.classList.toggle("on", running);
-        }
-
-        const modeLabel = { local: "本地", lan: "局域网", remote: "远程" };
-        const modeEl = $("proxy-mode");
-        if (modeEl) {
-            modeEl.textContent = running
-                ? (modeLabel[st.mode] || st.mode || "—")
-                : (modeLabel[cfg.mode] || cfg.mode || "—");
-        }
-
-        const httpEl = $("proxy-http");
-        if (httpEl) httpEl.textContent = running ? `${st.listen}:${st.http_port}` : "—";
-
-        const socksEl = $("proxy-socks");
-        if (socksEl) socksEl.textContent = running ? `${st.listen}:${st.socks_port}` : "—";
-
-        const nodesEl = $("proxy-nodes");
-        if (nodesEl) nodesEl.textContent = running ? (st.node_count || 0) : 0;
-
-        const selectedEl = $("proxy-selected");
-        if (selectedEl) selectedEl.textContent = running ? (st.selected || "—") : "—";
-
-        const hint = $("proxy-hint");
-        if (hint) {
-            if (st.error) {
-                hint.textContent = st.error;
-                hint.style.color = "#ef4444";
-            } else if (!data.binary_available) {
-                hint.textContent = "未找到 sing-box 可执行文件，请确认镜像已安装";
-                hint.style.color = "#ef4444";
-            } else if (!cfg.enabled) {
-                hint.textContent = "代理未启用（在「配置」中开启）";
-                hint.style.color = "";
-            } else {
-                hint.textContent = "";
-            }
-        }
-
-        const restartBtn = $("btn-proxy-restart");
-        const stopBtn = $("btn-proxy-stop");
-        if (restartBtn) restartBtn.disabled = !cfg.enabled;
-        if (stopBtn) stopBtn.disabled = !running;
-    }
-
-    async function restartProxy() {
-        const hint = $("proxy-hint");
-        if (hint) { hint.textContent = ""; hint.style.color = ""; }
-        try {
-            const resp = await fetch("/api/proxy/restart", { method: "POST" });
-            const data = await resp.json().catch(() => ({}));
-            if (!resp.ok) {
-                if (hint) {
-                    hint.textContent = data.message || data.detail || `重启失败 (${resp.status})`;
-                    hint.style.color = "#ef4444";
-                }
-                return;
-            }
-            await loadProxyStatus();
-        } catch (e) {
-            if (hint) { hint.textContent = "请求失败：" + e.message; hint.style.color = "#ef4444"; }
-        }
-    }
-
-    async function stopProxy() {
-        if (!confirm("确定停止内置代理？")) return;
-        const hint = $("proxy-hint");
-        if (hint) { hint.textContent = ""; hint.style.color = ""; }
-        try {
-            await fetch("/api/proxy/stop", { method: "POST" });
-            await loadProxyStatus();
-        } catch (e) {
-            if (hint) { hint.textContent = "请求失败：" + e.message; hint.style.color = "#ef4444"; }
-        }
-    }
-
-    // ============================================================
     // 配置弹窗
     // ============================================================
     function renderTargetList(containerId, targets, kind) {
@@ -937,9 +838,9 @@
         const logging = cfg.logging || {};
         const check = cfg.check || {};
         const output = cfg.output || {};
-        const proxy = cfg.proxy || {};
         const notify = cfg.notify || {};
 
+        // 端口不再由配置管理，仅填充 host
         $("cfg-server-host").value = server.host || "0.0.0.0";
 
         const level = String(logging.level || "INFO").toUpperCase();
@@ -967,16 +868,6 @@
         document.querySelectorAll(".cfg-format").forEach((cb) => {
             cb.checked = fmtSet.has(cb.value);
         });
-
-        // ---- 内置代理 ----
-        $("cfg-proxy-enabled").checked = !!proxy.enabled;
-        $("cfg-proxy-mode").value = proxy.mode || "local";
-        $("cfg-proxy-auto").value = proxy.auto_select === false ? "0" : "1";
-        $("cfg-proxy-http-port").value = proxy.http_port ?? 7890;
-        $("cfg-proxy-socks-port").value = proxy.socks_port ?? 7891;
-        $("cfg-proxy-username").value = proxy.username || "";
-        $("cfg-proxy-password").value = proxy.password || "";
-        $("cfg-proxy-node-id").value = proxy.selected_node_id || "";
 
         $("cfg-notify-webhook").value = notify.webhook || "";
     }
@@ -1009,6 +900,7 @@
 
         return {
             server: {
+                // 端口不再由配置管理，只提交 host
                 host: $("cfg-server-host").value.trim() || "0.0.0.0",
             },
             logging: {
@@ -1031,16 +923,6 @@
                 max_nodes: 0,
                 formats: formats.length ? formats : ["mihomo", "singbox", "base64"],
                 directory: $("cfg-output-dir").value.trim() || "./output",
-            },
-            proxy: {
-                enabled: $("cfg-proxy-enabled").checked,
-                mode: $("cfg-proxy-mode").value,
-                http_port: Number($("cfg-proxy-http-port").value) || 7890,
-                socks_port: Number($("cfg-proxy-socks-port").value) || 7891,
-                username: $("cfg-proxy-username").value.trim(),
-                password: $("cfg-proxy-password").value.trim(),
-                auto_select: $("cfg-proxy-auto").value === "1",
-                selected_node_id: $("cfg-proxy-node-id").value.trim(),
             },
             notify: {
                 webhook: $("cfg-notify-webhook").value.trim(),
@@ -1089,13 +971,6 @@
             }
         }
 
-        if (payload.proxy.enabled && payload.proxy.mode === "remote") {
-            if (!payload.proxy.username || !payload.proxy.password) {
-                alert("远程代理模式必须填写用户名和密码");
-                return;
-            }
-        }
-
         const btn = $("btn-save-config");
         const originText = btn.textContent;
         btn.disabled = true;
@@ -1114,7 +989,6 @@
             }
             closeConfigModal();
             await loadNodes();
-            await loadProxyStatus();
 
             const hint = $("action-hint");
             if (hint) {
@@ -1136,9 +1010,6 @@
         $("btn-trigger").addEventListener("click", trigger);
         $("btn-stop").addEventListener("click", stopPipeline);
         $("btn-open-config").addEventListener("click", openConfigModal);
-
-        $("btn-proxy-restart").addEventListener("click", restartProxy);
-        $("btn-proxy-stop").addEventListener("click", stopProxy);
 
         $("btn-refresh-nodes").addEventListener("click", () => {
             currentPage = 1;
@@ -1242,6 +1113,4 @@
     buildTableHeader();
     connect();
     loadNodes();
-    loadProxyStatus();
-    setInterval(loadProxyStatus, 10000);
 })();

@@ -12,12 +12,11 @@
       - cron 表达式非法 → 清空
       - 旧字段 server.web_port / server.api_port → 移除（端口由 docker-compose 控制）
       - targets 缺 url / 格式错误 → 跳过并记录
-      - proxy 段：字段缺失 / 类型错误 / 越界值 → 修复
     只要有实际修复，就会把修复后的配置原子写回磁盘，并打 warning 日志。
 
 首次启动
     若 config.yaml 不存在，会用内置默认配置创建（含默认延迟/速度目标、
-    默认 cron、默认代理段），之后由自修复流程持续保持规范。
+    默认 cron），之后由自修复流程持续保持规范。
 """
 
 import hashlib
@@ -32,7 +31,6 @@ import yaml
 
 _VALID_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 _VALID_MODES = frozenset({"all", "any"})
-_VALID_PROXY_MODES = frozenset({"local", "lan", "remote"})
 
 _repair_logger = logging.getLogger("vael-mux.config")
 
@@ -65,12 +63,6 @@ def normalize_mode(v: Any, default: str = "all") -> str:
     return s if s in _VALID_MODES else default
 
 
-def normalize_proxy_mode(v: Any, default: str = "local") -> str:
-    """将任意输入归一化为 'local' / 'lan' / 'remote'。"""
-    s = str(v or default).strip().lower()
-    return s if s in _VALID_PROXY_MODES else default
-
-
 # ============================================================ YAML 序列化
 def _str_representer(dumper, data):
     """多行字符串（如 subscriptions）用块标量 '|' 输出，更易读。"""
@@ -88,7 +80,13 @@ def _resolve_config_path(
     *,
     must_exist: bool = False,
 ) -> Path:
-    """确定配置文件路径。"""
+    """确定配置文件路径。
+
+    - 传入 path：直接使用（must_exist=True 时校验存在性）
+    - 否则按优先级：VAEL_CONFIG_PATH > config/config.yaml > /app/config/config.yaml
+    - must_exist=True 时全部不存在则抛 FileNotFoundError
+    - 不存在且 must_exist=False 时，返回默认写入位置（VAEL_CONFIG_PATH 或 config/config.yaml）
+    """
     if path:
         p = Path(path)
         if must_exist and not p.exists():
@@ -166,16 +164,6 @@ def _default_config_dict() -> Dict[str, Any]:
             "max_nodes": 0,
             "formats": ["mihomo", "singbox", "base64", "v2ray", "v2ray-json"],
             "directory": "./output",
-        },
-        "proxy": {
-            "enabled": False,
-            "mode": "local",
-            "http_port": 7890,
-            "socks_port": 7891,
-            "username": "",
-            "password": "",
-            "auto_select": True,
-            "selected_node_id": "",
         },
         "notify": {"webhook": ""},
     }
@@ -257,18 +245,6 @@ def _normalize_for_dump(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "max_nodes": _to_int(output.get("max_nodes"), 0),
         "formats": [str(f) for f in formats],
         "directory": str(output.get("directory") or "./output"),
-    }
-
-    proxy = cfg.get("proxy") or {}
-    out["proxy"] = {
-        "enabled": bool(proxy.get("enabled", False)),
-        "mode": normalize_proxy_mode(proxy.get("mode"), "local"),
-        "http_port": _to_int(proxy.get("http_port"), 7890),
-        "socks_port": _to_int(proxy.get("socks_port"), 7891),
-        "username": str(proxy.get("username") or ""),
-        "password": str(proxy.get("password") or ""),
-        "auto_select": bool(proxy.get("auto_select", True)),
-        "selected_node_id": str(proxy.get("selected_node_id") or ""),
     }
 
     notify = cfg.get("notify") or {}
@@ -509,33 +485,6 @@ def _repair_config(data: Dict[str, Any]) -> List[str]:
             fixes.append("output.directory 为空，已设为 './output'")
     else:
         output["directory"] = str(dir_raw).strip()
-
-    # ---------- proxy ----------
-    proxy = data.get("proxy")
-    if not isinstance(proxy, dict):
-        data["proxy"] = {}
-        if proxy is not None:
-            fixes.append("proxy 段格式错误，已重置")
-        proxy = data["proxy"]
-
-    _repair_bool(proxy, "enabled", False, "proxy.enabled", fixes)
-    _repair_bool(proxy, "auto_select", True, "proxy.auto_select", fixes)
-
-    mode_raw = proxy.get("mode")
-    mode = str(mode_raw or "").strip().lower()
-    if mode not in _VALID_PROXY_MODES:
-        proxy["mode"] = "local"
-        if mode_raw not in (None, "", "local"):
-            fixes.append(f"proxy.mode={mode_raw!r} 无效，已设为 'local'")
-    else:
-        proxy["mode"] = mode
-
-    _repair_int(proxy, "http_port", 7890, "proxy.http_port", fixes, min_v=1, max_v=65535)
-    _repair_int(proxy, "socks_port", 7891, "proxy.socks_port", fixes, min_v=1, max_v=65535)
-
-    for key in ("username", "password", "selected_node_id"):
-        v = proxy.get(key)
-        proxy[key] = "" if v is None else str(v).strip()
 
     # ---------- notify ----------
     notify = data.get("notify")
